@@ -19,6 +19,12 @@ RC       = i686-w64-mingw32-windres
 TOOLPATH =
 RCPATH   = $(TOOLPATH)$(RC)
 
+!ifdef __UNIX__
+RM = rm -f
+!else
+RM = del
+!endif
+
 # -----------------------------------------------------------------
 # Compiler / linker flags
 # -----------------------------------------------------------------
@@ -27,7 +33,7 @@ COMPAT = -DNO_GSSAPI -DNO_IPV6 -DNO_MULTIMON &
          -DNO_HTMLHELP &
          -DWIN32S_COMPAT -DLEGACY_WINDOWS
 
-CFLAGS = -za99 -bt=nt -od -D_WINDOWS -D_WIN32 -DWIN32 &
+CFLAGS = -za99 -bt=nt -ox -D_WINDOWS -D_WIN32 -DWIN32 &
          -D_NO_OLDNAMES &
          -DHAVE_STRTOUMAX=1 &
          -DHAVE_GCP_RESULTSW=1 &
@@ -805,7 +811,7 @@ puttytel.exe: $(PUTTYTEL_OBJS) puttytel.res
 # =================================================================
 
 clean: .SYMBOLIC
-	rm -f *.obj *.exe *.res *.err *.map
+	-$(RM) -f *.obj *.exe *.res *.err *.map
 
 # =================================================================
 # Per-file compilation rules — utils/
