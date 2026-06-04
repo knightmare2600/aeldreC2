@@ -1,0 +1,160 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version string (e.g. 1.0.3)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1. Build all binaries inside the Docker cross-compiler image
+  # ------------------------------------------------------------------
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build cross-compiler image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: putty-win32s-builder:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build all binaries (PuTTY + C2 suite)
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            -w /src/windows \
+            putty-win32s-builder \
+            wmake -f Makefile.wc all \
+              "XFLAGS=-DAELDRE_VERSION=\"${{ inputs.version }}\""
+
+      - name: Upload EXE artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exes
+          path: windows/*.exe
+          retention-days: 7
+
+  # ------------------------------------------------------------------
+  # 2. Run test suite against the built binaries under Wine
+  # ------------------------------------------------------------------
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-exes
+          path: windows/
+
+      - name: Install Wine + test dependencies
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            wine-stable python3-pytest python3-requests
+          WINEDEBUG=-all DISPLAY= wineboot --init 2>/dev/null || true
+
+      - name: Run test suite
+        env:
+          WINEDEBUG: "-all"
+          DISPLAY: ""
+        run: python3 -m pytest tests/ -v --tb=short -p no:cacheprovider
+
+  # ------------------------------------------------------------------
+  # 3. Package and publish GitHub release
+  # ------------------------------------------------------------------
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-exes
+          path: pkg/
+
+      - name: Add non-binary release files
+        run: |
+          cp AELDREC2.GRP pkg/
+          # Copy SERVICES.DAT if present (nmap data, not in repo by default)
+          [ -f windows/SERVICES.DAT ] && cp windows/SERVICES.DAT pkg/ || true
+
+      - name: Build release ZIP
+        run: |
+          cd pkg
+          zip -j "../aeldreC2-${{ inputs.version }}.zip" *
+          echo "--- ZIP contents ---"
+          unzip -l "../aeldreC2-${{ inputs.version }}.zip"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ inputs.version }}"
+          name: "ÆldreC2 v${{ inputs.version }}"
+          prerelease: ${{ inputs.prerelease }}
+          body: |
+            ## ÆldreC2 v${{ inputs.version }}
+
+            Retro C2 framework targeting Windows 3.11 / Win32s / Windows NT 3.x–4.
+
+            ### Package contents
+
+            **C2 tools**
+            | Binary | Platform |
+            |--------|----------|
+            | `joshua.exe` | Win32s / NT / 95 — C2 controller |
+            | `tank.exe` | Win32s / NT / 95 — connect-back implant |
+            | `tank16.exe` | Win 3.1 / WFW 3.11 — 16-bit implant |
+            | `clu.exe` | Win32s / NT / 95 — implant generator |
+            | `ncwfw.exe` | Win32s / NT / 95 — netcat relay |
+            | `grid.exe` | Win32s / NT / 95 — port scanner |
+            | `ipcalc32.exe` | Win32s / NT / 95 — subnet calculator |
+            | `ipcalc16.exe` | Win 3.1 / WFW 3.11 — subnet calculator |
+            | `markuped.exe` | Win32s / NT / 95 — Markdown editor |
+            | `wget.exe` | Win32s / NT / 95 — HTTP/HTTPS/FTP downloader |
+            | `wget16.exe` | Win 3.1 / WFW 3.11 — HTTP downloader |
+
+            **PuTTY suite (Win32s-compatible build)**
+            `putty.exe` `plink.exe` `pscp.exe` `psftp.exe` `puttytel.exe` `puttygen.exe` `pageant.exe` `winsftp.exe`
+
+            **Program Manager group**
+            `AELDREC2.GRP` — drop into `C:\PROGMAN\` (assumes tools live in `C:\Hack\AELDREC2\`)
+
+            ### Quick start
+            See the [README](https://github.com/${{ github.repository }}/blob/main/README.md).
+
+            > For authorised engagements, CTF, and educational use only.
+          files: "aeldreC2-${{ inputs.version }}.zip"
+          draft: false

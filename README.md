@@ -545,6 +545,8 @@ nmap data files are GPL-licensed. See https://nmap.org/book/man-legal.html
 * Sound support for session events
 * WinG visual enhancements
 * Offline log analysis
+* **Win3.11 installer** — a proper `SETUP.EXE`-style installer in the tradition of UltraEdit, WinZip 5.x etc. Wizard dialogs, progress meter, Program Manager group auto-creation, optional component selection. Needs to run on bare WFW 3.11 with no prerequisites.
+* **Easter egg** — ø keypress in any tool pops the easter egg. (Much later; it's a trademark. Don't implement early.)
 
 ---
 
@@ -582,6 +584,32 @@ All icons (32×32 + 16×16, 4bpp Windows VGA palette) generated from source imag
 | `windows/ipcalc.ico` | `icons/ipcalc.png` | ipcalc32.exe, ipcalc16.exe |
 | `windows/markuped.ico` | `icons/markuped.png` | markuped.exe |
 | `windows/wget.ico` | `icons/wget.png` | wget.exe, wget16.exe |
+
+---
+
+## Testing
+
+```sh
+pip install pytest requests
+```
+
+Tests live in `tests/`. Wine is required for the Wine-dependent tests; they auto-skip if `wine` is not in PATH.
+
+```sh
+# Run everything that doesn't need a live C2 build
+pytest tests/ -v
+
+# Run the full C2 protocol suite (needs Docker + Wine)
+C2_INTEGRATION=1 pytest tests/test_c2_protocol.py -v
+```
+
+| Test file | What it covers |
+|-----------|----------------|
+| `test_ipcalc.py` | ipcalc32.exe — subnet calculation output, flags (APIPA, RFC 1918, multicast), file output, dotted-mask input |
+| `test_grid.py` | grid.exe — open/closed port detection, TSV output format, banner grab, `-t`/`-T` flags |
+| `test_wget.py` | wget.exe — HTTP download, `-O` filename, `-q` quiet mode, binary integrity, large payloads, connection-refused exit code |
+| `test_clu.py` | CLU magic signature in tank.exe/tank16.exe, config block round-trip patch, NE/PE binary format checks, GUI smoke test |
+| `test_c2_protocol.py` | Tank→Joshua TCP connection, initial SYSINFO message, binary format assertions (NE/PE headers). Integration tests gated on `C2_INTEGRATION=1`. |
 
 ---
 
