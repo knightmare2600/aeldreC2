@@ -759,7 +759,7 @@ tank16.obj: tank16.c
 	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ tank16.c
 
 tank16.res: tank.rc tank.ico
-	wrc -q -bt=windows tank.rc tank16.res
+	wrc -q -bt=windows -r -fo=$@ tank.rc
 
 tank16.exe: tank16.obj tank16.res
 	wlink system windows name $@ file tank16.obj library winsock.lib
@@ -814,7 +814,7 @@ ipcalc16.obj: ipcalc.c
 	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ ipcalc.c
 
 ipcalc16.res: ipcalc.rc ipcalc.ico
-	wrc -q -bt=windows ipcalc.rc ipcalc16.res
+	wrc -q -bt=windows -r -fo=$@ ipcalc.rc
 
 ipcalc16.exe: ipcalc16.obj ipcalc16.res
 	wlink system windows name $@ file ipcalc16.obj
@@ -855,7 +855,7 @@ wget16.obj: wget.c
 	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ wget.c
 
 wget16.res: wget.rc wget.ico
-	wrc -q -bt=windows wget.rc wget16.res
+	wrc -q -bt=windows -r -fo=$@ wget.rc
 
 wget16.exe: wget16.obj wget16.res
 	wlink system windows name $@ file wget16.obj library winsock.lib

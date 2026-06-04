@@ -24,6 +24,15 @@
 #  include <stdio.h>
 #  include <string.h>
 #  include <stdlib.h>
+/* Win16 API has no A-suffix variants */
+#  define lstrcpyA   lstrcpy
+#  define lstrcpynA  lstrcpyn
+#  define lstrlenA   lstrlen
+#  define lstrcmpA   lstrcmp
+#  define wsprintfA  wsprintf
+#  ifndef MAKEWORD
+#    define MAKEWORD(a,b) ((WORD)(((BYTE)(a))|(((WORD)((BYTE)(b)))<<8)))
+#  endif
 #else
 #  include <windows.h>
 #  include <winsock.h>
@@ -400,14 +409,16 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
 #define HTTP_QUERY_STATUS_CODE       19
 #define FTP_TRANSFER_TYPE_BINARY     2
 
+typedef WORD INTERNET_PORT;  /* from wininet.h; defined here to avoid the dependency */
+
 typedef HANDLE (WINAPI *PFN_InternetOpen)(LPCSTR,DWORD,LPCSTR,LPCSTR,DWORD);
-typedef HANDLE (WINAPI *PFN_InternetConnect)(HANDLE,LPCSTR,INTERNET_PORT,LPCSTR,LPCSTR,DWORD,DWORD,DWORD_PTR);
-typedef HANDLE (WINAPI *PFN_HttpOpenRequest)(HANDLE,LPCSTR,LPCSTR,LPCSTR,LPCSTR,LPCSTR*,DWORD,DWORD_PTR);
+typedef HANDLE (WINAPI *PFN_InternetConnect)(HANDLE,LPCSTR,INTERNET_PORT,LPCSTR,LPCSTR,DWORD,DWORD,DWORD);
+typedef HANDLE (WINAPI *PFN_HttpOpenRequest)(HANDLE,LPCSTR,LPCSTR,LPCSTR,LPCSTR,LPCSTR*,DWORD,DWORD);
 typedef BOOL   (WINAPI *PFN_HttpSendRequest)(HANDLE,LPCSTR,DWORD,LPVOID,DWORD);
 typedef BOOL   (WINAPI *PFN_HttpQueryInfo)(HANDLE,DWORD,LPVOID,LPDWORD,LPDWORD);
 typedef BOOL   (WINAPI *PFN_InternetReadFile)(HANDLE,LPVOID,DWORD,LPDWORD);
 typedef BOOL   (WINAPI *PFN_InternetCloseHandle)(HANDLE);
-typedef HANDLE (WINAPI *PFN_FtpOpenFile)(HANDLE,LPCSTR,DWORD,DWORD,DWORD_PTR);
+typedef HANDLE (WINAPI *PFN_FtpOpenFile)(HANDLE,LPCSTR,DWORD,DWORD,DWORD);
 
 static HMODULE                g_wininet = NULL;
 static PFN_InternetOpen       pfnInternetOpen;
