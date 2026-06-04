@@ -1,42 +1,270 @@
-# putty-win32s
-A port of putty 0.83 to Windows 3.1+Win32s.
+# ÆldreC2 - C2 for the masses
 
-Maybe this may help close this bug:
-https://www.chiark.greenend.org.uk/~sgtatham/putty/wishlist/port-win32s.html
+> "Shall we play a game?"
 
-![putty-win32s](/assets/putty-about.png)
+ÆldreC2 is an experimental Command & Control framework targeting vintage Microsoft Windows environments, with a primary focus on Windows 3.1x and Win32s compatibility.
 
-The whole windows sourcetree builds, and putty.exe, puttytel.exe and puttygen.exe are tested working.
+The project explores what a reasonably capable remote administration framework might have looked like if developed during the early-to-mid 1990s, while taking advantage of modern cryptography and contemporary development practices where practical.
 
-## Building
-To build this, you need the following:
-* OpenWatcom 2.0 beta
+**Repository name:** `aeldreC2`
+**Project name:** `ÆldreC2`
 
-Then go in the 'windows' directory and type `wmake -f Makefile.wc win32s`
+---
 
-## Prerequistes
-* Windows 3.11
-* Microsoft TCP/IP-32 version 3.11b (or a compatible winsock 1.1 stack)
-* Microsoft Win32s 1.30c (might work in other versions, not tested)
+## Project Goals
 
-## Running
-* As the UNIX codepath for sessions saving/loading is used, you should set a HOME environment variable in AUTOEXEC.BAT
-* If not, it defaults to C:\HOME
-* run putty.exe
+* Support Windows 3.1 and Windows for Workgroups 3.11
+* Support Win32s applications where available
+* Provide secure communications over modern networks
+* Remain faithful to the user interface and design conventions of the early 1990s
+* Be educational, nostalgic, and technically interesting
 
-## What works
-* the GUI apps, at least putty.exe, puttytel.exe and puttygen.exe
+---
 
-## What doesn't work
-* Unicode. really. at all.
-* pageant.exe.
-* console applications.
-  They'll load, and that's all, win32s doesn't support console applications.
+## Architecture
 
-As a replacement, there's an updated ssh2dos port with support of modern protocols here: https://github.com/Toyoyo/ssh2dos
+### Joshua
 
-Working scp2dos.exe/scp2d386.exe, sftpdos.exe/sftpd386.exe and ssh2dos.exe/ssh2d386.exe are now provided in releases.
+The central C2 server.
 
-The 386 variants are using the DOS32A extender which, in my experience, works correctly under win3.1.
+Named after the WOPR computer in the film *WarGames*.
 
-Of course, they'll require a working wattcp environment, and either 2 NICs or something like ndis3pkt.
+Joshua is responsible for:
+
+* Session management
+* Operator authentication
+* Task distribution
+* Implant management
+* TLS session handling
+* Logging and audit records
+
+---
+
+### Tank Programs
+
+Remote implants.
+
+Named after the Tank Programs from *Tron*.
+
+Tank Programs provide:
+
+* Remote command execution
+* File transfer
+* Host information gathering
+* Registry interaction
+* Process inspection
+* Network diagnostics
+
+---
+
+### CLU
+
+The implant generator.
+
+Named after the Codified Likeness Utility from *Tron*.
+
+Responsibilities:
+
+* Generate customised implants
+* Configure callback parameters
+* Configure encryption settings
+* Produce Win16 and Win32s builds
+* Generate deployment packages
+
+---
+
+### Recognizer
+
+Host environment validation and anti-analysis module.
+
+Named after the Recognizers from *Tron*.
+
+Capabilities may include:
+
+* Virtual machine detection
+* Debugger detection
+* Sandbox detection
+* Timing checks
+* Environment validation
+
+---
+
+## Features
+
+### Core
+
+* Multi-session control
+* Session grouping
+* Session tagging
+* Session notes
+* Operator console
+* Event logging
+* Audit trail
+
+### Networking
+
+* Native Winsock support
+* TCP communications
+* Proxy support
+* DNS resolution
+* Reconnect handling
+* Multi-homed network support
+
+### Security
+
+* TLS/SSL support
+* Certificate validation
+* Encrypted communications
+* Secure session negotiation
+
+TLS functionality is provided by the PuTTY-Win32 project.
+
+### User Interface
+
+* Multiple Document Interface (MDI)
+* Multiple session windows
+* Session manager
+* Event viewer
+* Transfer manager
+* Host information windows
+* Configuration editor
+* Context-sensitive help
+
+The very best 1993 had to offer.
+
+### Themes
+
+Theme support is planned.
+
+As the Hackers Reference Manual famously states:
+
+> They're trashing our rights.
+
+Naturally this requires configurable colour schemes.
+
+---
+
+## Supported Platforms
+
+### Controller
+
+* Windows 3.1
+* Windows for Workgroups 3.11
+* Win32s
+* Windows NT 3.x
+* Windows 95 (best effort)
+
+### Tank Programs
+
+* Windows 3.1
+* Windows for Workgroups 3.11
+* Win32s
+* Windows 95
+* Windows NT
+
+---
+
+## Planned Capabilities
+
+### Remote Administration
+
+* Remote command execution
+* Remote shell
+* Environment variable viewing
+* System information collection
+* User information collection
+
+### Process Management
+
+* Process listing
+* Process termination
+* Process information
+* Task monitoring
+
+### File Operations
+
+* File upload
+* File download
+* Directory browsing
+* File deletion
+* File renaming
+* File search
+
+### Registry Operations
+
+* Registry viewing
+* Registry searching
+* Registry export
+* Registry editing (optional)
+
+### Networking
+
+* Connection enumeration
+* Route table viewing
+* Hostname resolution
+* Interface information
+* Remote ping
+* Basic service discovery
+
+### Monitoring
+
+* Event logging
+* Session timeline
+* Connection statistics
+* Host inventory
+
+---
+
+## Design Philosophy
+
+ÆldreC2 is intended to feel like software that could plausibly have been demonstrated at COMDEX in 1994.
+
+This means:
+
+* Native Windows UI
+* Menus instead of ribbons
+* Dialog boxes instead of web interfaces
+* MDI everywhere
+* Keyboard shortcuts for everything
+* Minimal dependencies
+* Maximum nostalgia
+
+---
+
+## TODO
+
+### Port Scanner
+
+Develop a standalone Windows 3.x-compatible network scanner.
+
+Planned components:
+
+* Command-line scanner
+* GUI scanner
+* TCP connect scanning
+* Service identification
+* Banner grabbing
+* Host discovery
+* Import of service fingerprints
+
+The goal is not to recreate Nmap, but to provide a capable vintage Windows network scanner that can interoperate with contemporary service fingerprint data where practical.
+
+### Future Work
+
+* Session scripting
+* Plugin architecture
+* Macro support
+* Integrated packet viewer
+* Network mapping
+* Historical Windows theme packs
+* Sound support for session events
+* WinG visual enhancements
+* Offline log analysis
+
+---
+
+## Disclaimer
+
+ÆldreC2 is an educational and research project intended for authorised administration, testing, and historical computing experimentation.
+
+Users are responsible for ensuring compliance with all applicable laws, regulations, and policies.
