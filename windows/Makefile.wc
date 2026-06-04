@@ -788,7 +788,7 @@ clu.exe: clu.obj clu.res
 grid.obj: grid.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c grid.c
 
-grid.res: grid.rc reco.ico
+grid.res: grid.rc grid.ico
 	$(RCPATH) $(RCFLAGS) grid.rc -o grid.res
 
 grid.exe: grid.obj grid.res
@@ -803,7 +803,7 @@ grid.exe: grid.obj grid.res
 ipcalc32.obj: ipcalc.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c ipcalc.c
 
-ipcalc32.res: ipcalc.rc reco.ico
+ipcalc32.res: ipcalc.rc ipcalc.ico
 	$(RCPATH) $(RCFLAGS) ipcalc.rc -o ipcalc32.res
 
 ipcalc32.exe: ipcalc32.obj ipcalc32.res
@@ -813,7 +813,7 @@ ipcalc32.exe: ipcalc32.obj ipcalc32.res
 ipcalc16.obj: ipcalc.c
 	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ ipcalc.c
 
-ipcalc16.res: ipcalc.rc reco.ico
+ipcalc16.res: ipcalc.rc ipcalc.ico
 	wrc -q -bt=windows ipcalc.rc ipcalc16.res
 
 ipcalc16.exe: ipcalc16.obj ipcalc16.res

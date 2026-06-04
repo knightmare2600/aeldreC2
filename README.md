@@ -501,7 +501,9 @@ All icons (32×32 + 16×16, 4bpp Windows VGA palette) generated from source imag
 | `windows/ncwfw.ico` | `icons/WOPR.jpg` | ncwfw.exe |
 | `windows/tank.ico` | `icons/TANK.webp` | tank.exe, tank16.exe |
 | `windows/lightcycle.ico` | `icons/LIGHTCYCLE.PNG` | clu.exe |
-| `windows/reco.ico` | `icons/RECO.webp` | grid.exe, ipcalc32.exe, ipcalc16.exe |
+| `windows/reco.ico` | `icons/RECO.webp` | (available) |
+| `windows/grid.ico` | `icons/grid.png` | grid.exe |
+| `windows/ipcalc.ico` | `icons/ipcalc.png` | ipcalc32.exe, ipcalc16.exe |
 
 ---
 
