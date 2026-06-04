@@ -423,9 +423,9 @@ OBJ_ROOTSHARED = &
 # Default target
 # =================================================================
 
-all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe .SYMBOLIC
+all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe .SYMBOLIC
 
-win32s: putty.exe puttytel.exe puttygen.exe winsftp.exe .SYMBOLIC
+win32s: putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe .SYMBOLIC
 
 # =================================================================
 # be_list.c — per-target compilation with different defines
@@ -695,8 +695,21 @@ WINSFTP_OBJS = &
 	sftpcommon.obj
 
 winsftp.exe: $(WINSFTP_OBJS) psftp.res
-	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) $(WINSFTP_OBJS)
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) $(WINSFTP_OBJS) comctl32.lib
 	wrc psftp.res $@
+
+# =================================================================
+# ncwfw.exe — MDI Netcat (plain TCP + optional Schannel TLS)
+# Standalone: no PuTTY objects needed.
+# TLS requires secur32.dll (NT 4.0 SP3+ / Win95 OSR2+), loaded at runtime.
+# Plain TCP works on Win32s / Windows 3.1.
+# =================================================================
+
+ncwfw.obj: ncwfw.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c ncwfw.c
+
+ncwfw.exe: ncwfw.obj
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) ncwfw.obj wsock32.lib
 
 # =================================================================
 # putty.exe — GUI SSH/Telnet/Serial terminal
