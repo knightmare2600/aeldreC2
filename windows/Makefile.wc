@@ -423,9 +423,9 @@ OBJ_ROOTSHARED = &
 # Default target
 # =================================================================
 
-all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe ipcalc16.exe .SYMBOLIC
+all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe .SYMBOLIC
 
-win32s: putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe .SYMBOLIC
+win32s: putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe markuped.exe wget.exe .SYMBOLIC
 
 # =================================================================
 # be_list.c — per-target compilation with different defines
@@ -819,6 +819,47 @@ ipcalc16.res: ipcalc.rc ipcalc.ico
 ipcalc16.exe: ipcalc16.obj ipcalc16.res
 	wlink system windows name $@ file ipcalc16.obj
 	wrc ipcalc16.res $@
+
+# =================================================================
+# markuped.exe -- Win32s/Win32 Markdown editor (split-pane, live preview)
+# No Win16 version.
+# =================================================================
+
+markuped.obj: markuped.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c markuped.c
+
+markuped.res: markuped.rc markuped.ico
+	$(RCPATH) $(RCFLAGS) markuped.rc -o markuped.res
+
+markuped.exe: markuped.obj markuped.res
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) markuped.obj comdlg32.lib
+	wrc markuped.res $@
+
+# =================================================================
+# wget.exe  -- Win32s/Win32 command-line HTTP/HTTPS/FTP downloader
+# wget16.exe -- Win16 build (HTTP only, Winsock 1.1)
+# HTTPS/FTP requires WININET.DLL (IE 3+); plain HTTP falls back to raw socket.
+# =================================================================
+
+wget.obj: wget.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c wget.c
+
+wget.res: wget.rc wget.ico
+	$(RCPATH) $(RCFLAGS) wget.rc -o wget.res
+
+wget.exe: wget.obj wget.res
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) wget.obj wsock32.lib
+	wrc wget.res $@
+
+wget16.obj: wget.c
+	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ wget.c
+
+wget16.res: wget.rc wget.ico
+	wrc -q -bt=windows wget.rc wget16.res
+
+wget16.exe: wget16.obj wget16.res
+	wlink system windows name $@ file wget16.obj library winsock.lib
+	wrc wget16.res $@
 
 # =================================================================
 # putty.exe — GUI SSH/Telnet/Serial terminal

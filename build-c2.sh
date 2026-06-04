@@ -65,15 +65,18 @@ case "$TARGET" in
         run grid.exe
         run ipcalc32.exe
         run ipcalc16.exe
+        run markuped.exe
+        run wget.exe
+        run wget16.exe
         echo ""
-        echo "Built: joshua.exe tank.exe tank16.exe clu.exe ncwfw.exe grid.exe ipcalc32.exe ipcalc16.exe"
+        echo "Built: joshua.exe tank.exe tank16.exe clu.exe ncwfw.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe"
         echo "Output: $REPO/windows/"
         ;;
     all)
         # full PuTTY + C2 suite — slow
         run all
         ;;
-    joshua|tank|tank16|clu|ncwfw|grid|ipcalc32|ipcalc16)
+    joshua|tank|tank16|clu|ncwfw|grid|ipcalc32|ipcalc16|markuped|wget|wget16)
         run "${TARGET}.exe"
         ;;
     *)
