@@ -792,7 +792,7 @@ grid.res: grid.rc grid.ico
 	$(RCPATH) $(RCFLAGS) grid.rc -o grid.res
 
 grid.exe: grid.obj grid.res
-	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) grid.obj wsock32.lib
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) grid.obj wsock32.lib comdlg32.lib
 	wrc grid.res $@
 
 # =================================================================
