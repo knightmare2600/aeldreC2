@@ -429,7 +429,7 @@ win32s: pageant.exe putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe jo
 
 dist: win32s .SYMBOLIC
 	sh -c "mkdir -p ../output/compiled ../output/exe"
-	python3 ../tools/mksetup.py --out16 ../output/exe/setup16.exe --out32 ../output/exe/setup32.exe
+	python3 ../tools/mksetup.py --out16 output/exe/setup16.exe --out32 output/exe/setup32.exe
 	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
 
 # =================================================================
