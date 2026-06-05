@@ -17,6 +17,23 @@
 #include <string.h>
 #include <direct.h>
 
+/* Win16 headers omit MAX_PATH and may omit the DDE message constants */
+#ifndef MAX_PATH
+#define MAX_PATH 260
+#endif
+
+#ifndef WM_DDE_INITIATE
+#define WM_DDE_INITIATE   0x03E0
+#define WM_DDE_TERMINATE  0x03E1
+#define WM_DDE_ADVISE     0x03E2
+#define WM_DDE_UNADVISE   0x03E3
+#define WM_DDE_ACK        0x03E4
+#define WM_DDE_DATA       0x03E5
+#define WM_DDE_REQUEST    0x03E6
+#define WM_DDE_POKE       0x03E7
+#define WM_DDE_EXECUTE    0x03E8
+#endif
+
 /* ------------------------------------------------------------------ */
 /* Constants                                                            */
 /* ------------------------------------------------------------------ */
@@ -599,7 +616,7 @@ static LRESULT __export CALLBACK GaugeSubclass(HWND hwnd, UINT msg,
         EndPaint(hwnd, &ps);
         return 0;
     }
-    return CallWindowProc(g_gauge_oldproc, hwnd, msg, wp, lp);
+    return CallWindowProc((FARPROC)g_gauge_oldproc, hwnd, msg, wp, lp);
 }
 
 static void update_gauge(int pct)
