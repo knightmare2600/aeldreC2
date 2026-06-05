@@ -16,10 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # OpenWatcom 2.0 — Linux x86_64 snapshot
 # The tarball has a top-level "watcom/" directory; extracting to /opt/ gives /opt/watcom/
 # If the upstream release renames the root dir, adjust accordingly.
-ARG OW_URL=https://github.com/open-watcom/open-watcom-v2/releases/download/Current-build/ow-snapshot.tar.gz
-RUN wget -nv -O /tmp/ow.tar.gz "$OW_URL" \
-    && tar -xzf /tmp/ow.tar.gz -C /opt \
-    && rm /tmp/ow.tar.gz \
+ARG OW_URL=https://github.com/open-watcom/open-watcom-v2/releases/download/Current-build/ow-snapshot.tar.xz
+RUN wget -nv -O /tmp/ow.tar.xz "$OW_URL" \
+    && tar -xJf /tmp/ow.tar.xz -C /opt \
+    && rm /tmp/ow.tar.xz \
     && ls /opt/watcom/binl64/ /opt/watcom/binl/ 2>/dev/null | grep wmake \
     && ( test -x /opt/watcom/binl64/wmake || test -x /opt/watcom/binl/wmake )
 
