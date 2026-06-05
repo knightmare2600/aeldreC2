@@ -359,8 +359,6 @@ flynn.exe 172.16.93.1 4444 A3F7B291
 
 Two-pane layout: operator list on the left, log + input on the right.
 
-**TODO:** Icons for `lightman.exe` and `flynn.exe` (remind me).
-
 ---
 
 ---

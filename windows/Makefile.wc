@@ -868,8 +868,12 @@ wget16.exe: wget16.obj wget16.res
 lightman.obj: lightman.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c lightman.c
 
-lightman.exe: lightman.obj
+lightman.res: lightman.rc lightman.ico
+	$(RCPATH) $(RCFLAGS) lightman.rc -o lightman.res
+
+lightman.exe: lightman.obj lightman.res
 	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) lightman.obj wsock32.lib
+	wrc lightman.res $@
 
 # =================================================================
 # flynn.exe -- GUI operator client (connects to Joshua)
@@ -878,8 +882,12 @@ lightman.exe: lightman.obj
 flynn.obj: flynn.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c flynn.c
 
-flynn.exe: flynn.obj
+flynn.res: flynn.rc flynn.ico
+	$(RCPATH) $(RCFLAGS) flynn.rc -o flynn.res
+
+flynn.exe: flynn.obj flynn.res
 	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) flynn.obj wsock32.lib
+	wrc flynn.res $@
 
 # =================================================================
 # putty.exe — GUI SSH/Telnet/Serial terminal
