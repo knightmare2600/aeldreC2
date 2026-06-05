@@ -23,18 +23,31 @@ extern "C" {
 #endif
 
 /* ------------------------------------------------------------------ */
+/* Export / import decoration                                           */
+/* ------------------------------------------------------------------ */
+
+/* When building aelctl.dll itself, compile with -DAELCTL_BUILD_DLL so
+   that the public functions are marked __declspec(dllexport).
+   Consumers that include this header get __declspec(dllimport). */
+#ifdef AELCTL_BUILD_DLL
+#  define AELAPI __declspec(dllexport)
+#else
+#  define AELAPI __declspec(dllimport)
+#endif
+
+/* ------------------------------------------------------------------ */
 /* Public API                                                           */
 /* ------------------------------------------------------------------ */
 
 /* InitCommonControls — identical signature to comctl32's version.
    Call this instead of (or in addition to) the real InitCommonControls.
    Safe to call multiple times. */
-void WINAPI InitCommonControls(void);
+AELAPI void WINAPI InitCommonControls(void);
 
 /* AelCtl_Init — extended entry point that accepts hInst explicitly.
    Not needed when linked as a DLL (DllMain captures hInst automatically),
    but provided for static-link or test scenarios. */
-BOOL WINAPI AelCtl_Init(HINSTANCE hInst);
+AELAPI BOOL WINAPI AelCtl_Init(HINSTANCE hInst);
 
 /* ------------------------------------------------------------------ */
 /* Progress bar messages (values match comctl32)                        */

@@ -1029,13 +1029,12 @@ setup16.exe: setup16.obj setup16.res
 # =================================================================
 
 aelctl.obj: aelctl.c aelctl.h
-	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -bd -fo=$@ -c aelctl.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -bd -DAELCTL_BUILD_DLL -fo=$@ -c aelctl.c
 
-aelctl.lib: aelctl.obj aelctl.def
+aelctl.lib: aelctl.obj
 	wlink system nt_dll initinstance terminstance &
 	    name aelctl.dll &
 	    file aelctl.obj &
-	    def aelctl.def &
 	    option implib=aelctl.lib
 
 # =================================================================
