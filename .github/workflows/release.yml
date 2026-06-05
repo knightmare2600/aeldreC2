@@ -15,7 +15,7 @@ on:
 
 jobs:
   # ------------------------------------------------------------------
-  # 1. Build all binaries inside the Docker cross-compiler image
+  # 1. Build all binaries and produce bundled installers
   # ------------------------------------------------------------------
   build:
     name: Build
@@ -37,20 +37,26 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build all binaries (PuTTY + C2 suite)
+      - name: Build binaries and bundle installers
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/src" \
-            -w /src/windows \
             putty-win32s-builder \
-            wmake -f Makefile.wc all \
+            wmake -f Makefile.wc dist \
               "XFLAGS=-DAELDRE_VERSION=\"${{ inputs.version }}\""
 
-      - name: Upload EXE artifacts
+      - name: Upload compiled tools
         uses: actions/upload-artifact@v4
         with:
-          name: windows-exes
-          path: windows/*.exe
+          name: compiled-tools
+          path: output/compiled/
+          retention-days: 7
+
+      - name: Upload setup installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-installers
+          path: output/exe/
           retention-days: 7
 
   # ------------------------------------------------------------------
@@ -65,18 +71,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download binaries
+      - name: Download compiled tools
         uses: actions/download-artifact@v4
         with:
-          name: windows-exes
+          name: compiled-tools
           path: windows/
 
       - name: Install Wine + test dependencies
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            wine-stable python3-pytest python3-requests xz-utils
+          sudo apt-get install -y --no-install-recommends wine-stable python3-pytest python3-requests xz-utils
           WINEDEBUG=-all DISPLAY= wineboot --init 2>/dev/null || true
 
       - name: Run test suite
@@ -99,24 +104,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download binaries
+      - name: Download compiled tools
         uses: actions/download-artifact@v4
         with:
-          name: windows-exes
-          path: pkg/
+          name: compiled-tools
+          path: output/compiled/
 
-      - name: Add non-binary release files
-        run: |
-          cp AELDREC2.GRP pkg/
-          # Copy SERVICES.DAT if present (nmap data, not in repo by default)
-          [ -f windows/SERVICES.DAT ] && cp windows/SERVICES.DAT pkg/ || true
+      - name: Download setup installers
+        uses: actions/download-artifact@v4
+        with:
+          name: setup-installers
+          path: output/exe/
 
-      - name: Build release ZIP
+      - name: Build tools ZIP
         run: |
-          cd pkg
-          zip -j "../aeldreC2-${{ inputs.version }}.zip" *
-          echo "--- ZIP contents ---"
-          unzip -l "../aeldreC2-${{ inputs.version }}.zip"
+          cd output/compiled
+          zip -j "../../aeldreC2-${{ inputs.version }}-tools.zip" *
+          echo "--- tools ZIP contents ---"
+          unzip -l "../../aeldreC2-${{ inputs.version }}-tools.zip"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
@@ -129,7 +134,14 @@ jobs:
 
             Retro C2 framework targeting Windows 3.11 / Win32s / Windows NT 3.x–4.
 
-            ### Package contents
+            ### Installers
+
+            | File | Description |
+            |------|-------------|
+            | `setup16.exe` | Win16 self-extracting installer — runs on WFW 3.11 / Windows 3.1 |
+            | `setup32.exe` | Win32 self-extracting installer — runs on Win32s / Win95 / NT 3.1+ |
+
+            ### Tools (individual binaries — also in `setup16.exe` / `setup32.exe`)
 
             **C2 tools**
             | Binary | Platform |
@@ -145,16 +157,15 @@ jobs:
             | `markuped.exe` | Win32s / NT / 95 — Markdown editor |
             | `wget.exe` | Win32s / NT / 95 — HTTP/HTTPS/FTP downloader |
             | `wget16.exe` | Win 3.1 / WFW 3.11 — HTTP downloader |
+            | `lightman.exe` | Win32s / NT / 95 — lateral movement |
+            | `flynn.exe` | Win32s / NT / 95 — operator shell |
 
             **PuTTY suite (Win32s-compatible build)**
-            `putty.exe` `plink.exe` `pscp.exe` `psftp.exe` `puttytel.exe` `puttygen.exe` `pageant.exe` `winsftp.exe`
-
-            **Program Manager group**
-            `AELDREC2.GRP` — drop into `C:\PROGMAN\` (assumes tools live in `C:\Hack\AELDREC2\`)
-
-            ### Quick start
-            See the [README](https://github.com/${{ github.repository }}/blob/main/README.md).
+            `putty.exe` `puttytel.exe` `puttygen.exe` `pageant.exe` `winsftp.exe`
 
             > For authorised engagements, CTF, and educational use only.
-          files: "aeldreC2-${{ inputs.version }}.zip"
+          files: |
+            output/exe/setup16.exe
+            output/exe/setup32.exe
+            aeldreC2-${{ inputs.version }}-tools.zip
           draft: false

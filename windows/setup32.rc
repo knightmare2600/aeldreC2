@@ -1,8 +1,8 @@
-/* setup16.rc -- resources for AeldreC2 Win16 installer */
+/* setup32.rc -- resources for AeldreC2 Win32 installer */
 
 #include <windows.h>
 
-/* Dialog and control IDs -- must be defined here; wrc cannot see setup16.c */
+/* Dialog and control IDs */
 #define IDR_GPL3         100
 #define IDD_WELCOME      101
 #define IDD_LICENSE      102

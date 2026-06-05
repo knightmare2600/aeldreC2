@@ -18,13 +18,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # If the upstream release renames the root dir, adjust accordingly.
 ARG OW_URL=https://github.com/open-watcom/open-watcom-v2/releases/download/Current-build/ow-snapshot.tar.xz
 RUN wget -nv -O /tmp/ow.tar.xz "$OW_URL" \
-    && tar -xJf /tmp/ow.tar.xz -C /opt \
+    && mkdir -p /opt/watcom \
+    && tar --no-overwrite-dir --strip-components=1 -xJf /tmp/ow.tar.xz -C /opt/watcom \
     && rm /tmp/ow.tar.xz \
-    && ls /opt/watcom/binl64/ /opt/watcom/binl/ 2>/dev/null | grep wmake \
-    && ( test -x /opt/watcom/binl64/wmake || test -x /opt/watcom/binl/wmake )
+    && find /opt/watcom -name wmake | grep -q .
 
 ENV WATCOM=/opt/watcom
 ENV PATH="${PATH}:/opt/watcom/binl64:/opt/watcom/binl"
 ENV INCLUDE="/opt/watcom/h:/opt/watcom/h/nt"
 
-WORKDIR /src
+WORKDIR /src/windows
+CMD ["wmake", "-f", "Makefile.wc", "dist"]

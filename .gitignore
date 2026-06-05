@@ -38,6 +38,7 @@ cmake_install.cmake
 /*.GID
 /local
 /Output
+!/output
 /pageant
 /plink
 /pscp

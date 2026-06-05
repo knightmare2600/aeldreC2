@@ -132,42 +132,55 @@ def build_bundle(setup_exe: str, files: list, out_exe: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Bundle AeldreC2 files into a self-extracting Win16 setup.exe')
-    parser.add_argument('--setup',    default='windows/setup16.exe',
+        description='Bundle AeldreC2 files into self-extracting Win16 and Win32 setup.exe')
+    parser.add_argument('--setup16',  default='windows/setup16.exe',
                         help='Path to compiled setup16.exe (default: windows/setup16.exe)')
+    parser.add_argument('--setup32',  default='windows/setup32.exe',
+                        help='Path to compiled setup32.exe (default: windows/setup32.exe)')
     parser.add_argument('--c2-dir',   default='windows',
                         help='Directory containing AeldreC2 .exe files (default: windows)')
     parser.add_argument('--putty-dir', default='windows',
                         help='Directory containing Putty-Win32s .exe files (default: windows)')
     parser.add_argument('--dist-dir', default='dist',
                         help='Directory containing runtime DLLs (default: dist)')
-    parser.add_argument('--out',      default='setup.exe',
-                        help='Output self-extracting installer (default: setup.exe)')
+    parser.add_argument('--out16',    default='setup16.exe',
+                        help='Output Win16 installer (default: setup16.exe)')
+    parser.add_argument('--out32',    default='setup32.exe',
+                        help='Output Win32 installer (default: setup32.exe)')
     args = parser.parse_args()
 
     # All paths relative to repo root (where this script should be run from)
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    setup_exe = os.path.join(repo_root, args.setup)
     c2_dir    = os.path.join(repo_root, args.c2_dir)
     putty_dir = os.path.join(repo_root, args.putty_dir)
     dist_dir  = os.path.join(repo_root, args.dist_dir)
-    out_exe   = os.path.join(repo_root, args.out)
-
-    if not os.path.isfile(setup_exe):
-        print(f'ERROR: {setup_exe} not found. Build setup16.exe first.',
-              file=sys.stderr)
-        sys.exit(1)
 
     print('Collecting files...')
     files = collect_files(c2_dir, putty_dir, repo_root, dist_dir)
 
     if not files:
-        print('WARNING: no files to bundle — setup.exe will warn at runtime',
+        print('WARNING: no files to bundle — installers will warn at runtime',
               file=sys.stderr)
 
-    print(f'\nBuilding bundle...')
-    build_bundle(setup_exe, files, out_exe)
+    built = 0
+    for setup_rel, out_rel, label in (
+            (args.setup16, args.out16, 'Win16'),
+            (args.setup32, args.out32, 'Win32'),
+    ):
+        setup_exe = os.path.join(repo_root, setup_rel)
+        out_exe   = os.path.join(repo_root, out_rel)
+        if not os.path.isfile(setup_exe):
+            print(f'  [skip] {label} loader {setup_exe} not found', file=sys.stderr)
+            continue
+        print(f'\nBuilding {label} bundle...')
+        build_bundle(setup_exe, files, out_exe)
+        built += 1
+
+    if built == 0:
+        print('ERROR: no loader executables found. Build setup16.exe and/or setup32.exe first.',
+              file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == '__main__':

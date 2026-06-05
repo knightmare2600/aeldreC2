@@ -1,14 +1,14 @@
 /*
- * setup16.c -- AeldreC2 Win16 self-extracting installer
+ * setup32.c -- AeldreC2 Win32 self-extracting installer
  *
  * Wizard pages: Welcome -> License (GPL3) -> Components ->
  *               DLL Options (conditional) -> Confirm -> Progress/Done
  *
  * Build (from windows/ directory):
- *   wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win -fo=setup16.obj setup16.c
- *   wlink system windows name setup16.exe file setup16.obj library commdlg.lib
- *   wrc setup16.res setup16.exe
- *   python3 ../tools/mksetup.py   <- bundles EXEs into self-extracting setup.exe
+ *   wcl386 -bt=nt -ox -D_WINDOWS -D_WIN32 -DWIN32 -fo=setup32.obj -c setup32.c
+ *   wlink system nt_win name setup32.exe file setup32.obj library comdlg32.lib
+ *   wrc setup32.res setup32.exe
+ *   python3 ../tools/mksetup.py --setup windows/setup32.exe --out setup32_dist.exe
  */
 
 #include <windows.h>
@@ -16,23 +16,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <direct.h>
-
-/* Win16 headers omit MAX_PATH and may omit the DDE message constants */
-#ifndef MAX_PATH
-#define MAX_PATH 260
-#endif
-
-#ifndef WM_DDE_INITIATE
-#define WM_DDE_INITIATE   0x03E0
-#define WM_DDE_TERMINATE  0x03E1
-#define WM_DDE_ADVISE     0x03E2
-#define WM_DDE_UNADVISE   0x03E3
-#define WM_DDE_ACK        0x03E4
-#define WM_DDE_DATA       0x03E5
-#define WM_DDE_REQUEST    0x03E6
-#define WM_DDE_POKE       0x03E7
-#define WM_DDE_EXECUTE    0x03E8
-#endif
 
 /* ------------------------------------------------------------------ */
 /* Constants                                                            */
@@ -126,14 +109,14 @@ static const char *k_dll_names[] = { "WSOCK32.DLL", "COMDLG32.DLL", NULL };
 /* Forward declarations                                                 */
 /* ------------------------------------------------------------------ */
 
-BOOL   __export CALLBACK WelcomeDlgProc  (HWND, UINT, WPARAM, LPARAM);
-BOOL   __export CALLBACK LicenseDlgProc  (HWND, UINT, WPARAM, LPARAM);
-BOOL   __export CALLBACK CompsDlgProc    (HWND, UINT, WPARAM, LPARAM);
-BOOL   __export CALLBACK DllOptsDlgProc  (HWND, UINT, WPARAM, LPARAM);
-BOOL   __export CALLBACK ConfirmDlgProc  (HWND, UINT, WPARAM, LPARAM);
-BOOL   __export CALLBACK ProgressDlgProc (HWND, UINT, WPARAM, LPARAM);
-LRESULT __export CALLBACK GaugeSubclass  (HWND, UINT, WPARAM, LPARAM);
-LRESULT __export CALLBACK StubWndProc    (HWND, UINT, WPARAM, LPARAM);
+BOOL    CALLBACK WelcomeDlgProc  (HWND, UINT, WPARAM, LPARAM);
+BOOL    CALLBACK LicenseDlgProc  (HWND, UINT, WPARAM, LPARAM);
+BOOL    CALLBACK CompsDlgProc    (HWND, UINT, WPARAM, LPARAM);
+BOOL    CALLBACK DllOptsDlgProc  (HWND, UINT, WPARAM, LPARAM);
+BOOL    CALLBACK ConfirmDlgProc  (HWND, UINT, WPARAM, LPARAM);
+BOOL    CALLBACK ProgressDlgProc (HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK GaugeSubclass   (HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK StubWndProc     (HWND, UINT, WPARAM, LPARAM);
 
 /* ------------------------------------------------------------------ */
 /* Bundle helpers                                                       */
@@ -165,7 +148,7 @@ static BOOL load_bundle(void)
     for (i = 0; i < (int)foot.n_files; i++) {
         if (fread(&g_entries[i], 1, sizeof(BundleEntry), f)
                 != sizeof(BundleEntry)) break;
-        g_entries[i].name[63] = '\0';   /* safety */
+        g_entries[i].name[63] = '\0';
     }
     g_nentries = i;
     fclose(f);
@@ -173,7 +156,7 @@ static BOOL load_bundle(void)
     return g_bundled;
 }
 
-static BOOL extract_file_to(int idx, const char FAR *destpath)
+static BOOL extract_file_to(int idx, const char *destpath)
 {
     char selfpath[MAX_PATH];
     FILE *fsrc, *fdst;
@@ -205,7 +188,7 @@ static BOOL extract_file_to(int idx, const char FAR *destpath)
 /* Utility helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-static void ensure_dir(const char FAR *path)
+static void ensure_dir(const char *path)
 {
     char tmp[MAX_PATH];
     char *p;
@@ -227,7 +210,7 @@ static BOOL file_exists_in_sysdir(const char *name)
     GetSystemDirectory(path, sizeof(path));
     lstrcat(path, "\\");
     lstrcat(path, name);
-    hf = _lopen(path, READ);
+    hf = _lopen(path, OF_READ);
     if (hf != HFILE_ERROR) { _lclose(hf); return TRUE; }
     return FALSE;
 }
@@ -240,7 +223,7 @@ static BOOL any_dll_in_sysdir(void)
     return FALSE;
 }
 
-static void get_dest_dir(int dest, char FAR *out)
+static void get_dest_dir(int dest, char *out)
 {
     switch (dest) {
     case DEST_C2:
@@ -254,7 +237,7 @@ static void get_dest_dir(int dest, char FAR *out)
         if (g_dll_dest == 1)
             GetSystemDirectory(out, MAX_PATH);
         else
-            lstrcpy(out, g_c2_path);   /* DLLs alongside C2 apps */
+            lstrcpy(out, g_c2_path);
         break;
     }
 }
@@ -263,7 +246,7 @@ static void get_dest_dir(int dest, char FAR *out)
 /* PROGMAN DDE group creation                                           */
 /* ------------------------------------------------------------------ */
 
-static void pm_exec(HWND hwnd_pm, const char FAR *cmd)
+static void pm_exec(HWND hwnd_pm, const char *cmd)
 {
     HGLOBAL hg;
     LPSTR p;
@@ -272,7 +255,6 @@ static void pm_exec(HWND hwnd_pm, const char FAR *cmd)
     p = (LPSTR)GlobalLock(hg);
     lstrcpy(p, cmd);
     GlobalUnlock(hg);
-    /* Win16 WM_DDE_EXECUTE: wParam=sender hwnd, lParam=hGlobal */
     SendMessage(hwnd_pm, WM_DDE_EXECUTE,
                 (WPARAM)g_hwnd_main, (LPARAM)hg);
     GlobalFree(hg);
@@ -297,29 +279,29 @@ static void create_program_group(void)
     pm_exec(hwnd_pm, "[CreateGroup(AeldreC2)]");
 
     if (g_inst_c2) {
-        wsprintf(cmd, "[AddItem(%s\\joshua.exe,Joshua C2)]",   (LPSTR)g_c2_path);
+        wsprintf(cmd, "[AddItem(%s\\joshua.exe,Joshua C2)]",       g_c2_path);
         pm_exec(hwnd_pm, cmd);
-        wsprintf(cmd, "[AddItem(%s\\clu.exe,CLU Implant Builder)]", (LPSTR)g_c2_path);
+        wsprintf(cmd, "[AddItem(%s\\clu.exe,CLU Implant Builder)]", g_c2_path);
         pm_exec(hwnd_pm, cmd);
-        wsprintf(cmd, "[AddItem(%s\\markuped.exe,markuped Editor)]", (LPSTR)g_c2_path);
+        wsprintf(cmd, "[AddItem(%s\\markuped.exe,markuped Editor)]", g_c2_path);
         pm_exec(hwnd_pm, cmd);
-        wsprintf(cmd, "[AddItem(%s\\grid.exe,Grid Port Scanner)]",   (LPSTR)g_c2_path);
+        wsprintf(cmd, "[AddItem(%s\\grid.exe,Grid Port Scanner)]",   g_c2_path);
         pm_exec(hwnd_pm, cmd);
-        wsprintf(cmd, "[AddItem(%s\\ncwfw.exe,NCWfW Netcat)]",       (LPSTR)g_c2_path);
+        wsprintf(cmd, "[AddItem(%s\\ncwfw.exe,NCWfW Netcat)]",       g_c2_path);
         pm_exec(hwnd_pm, cmd);
-        wsprintf(cmd, "[AddItem(%s\\flynn.exe,Flynn Operator)]",     (LPSTR)g_c2_path);
+        wsprintf(cmd, "[AddItem(%s\\flynn.exe,Flynn Operator)]",     g_c2_path);
         pm_exec(hwnd_pm, cmd);
-        wsprintf(cmd, "[AddItem(%s\\ipcalc32.exe,IP Calculator)]",   (LPSTR)g_c2_path);
+        wsprintf(cmd, "[AddItem(%s\\ipcalc32.exe,IP Calculator)]",   g_c2_path);
         pm_exec(hwnd_pm, cmd);
     }
     if (g_inst_putty) {
-        wsprintf(cmd, "[AddItem(%s\\putty.exe,PuTTY)]",         (LPSTR)g_putty_path);
+        wsprintf(cmd, "[AddItem(%s\\putty.exe,PuTTY)]",         g_putty_path);
         pm_exec(hwnd_pm, cmd);
-        wsprintf(cmd, "[AddItem(%s\\winsftp.exe,WinSFTP)]",     (LPSTR)g_putty_path);
+        wsprintf(cmd, "[AddItem(%s\\winsftp.exe,WinSFTP)]",     g_putty_path);
         pm_exec(hwnd_pm, cmd);
-        wsprintf(cmd, "[AddItem(%s\\puttygen.exe,PuTTYgen)]",   (LPSTR)g_putty_path);
+        wsprintf(cmd, "[AddItem(%s\\puttygen.exe,PuTTYgen)]",   g_putty_path);
         pm_exec(hwnd_pm, cmd);
-        wsprintf(cmd, "[AddItem(%s\\pageant.exe,Pageant)]",     (LPSTR)g_putty_path);
+        wsprintf(cmd, "[AddItem(%s\\pageant.exe,Pageant)]",     g_putty_path);
         pm_exec(hwnd_pm, cmd);
     }
 
@@ -331,8 +313,7 @@ static void create_program_group(void)
 /* Dialog: Welcome (page 0)                                             */
 /* ------------------------------------------------------------------ */
 
-BOOL __export CALLBACK WelcomeDlgProc(HWND hwnd, UINT msg,
-                                       WPARAM wp, LPARAM lp)
+BOOL CALLBACK WelcomeDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     (void)lp;
     switch (msg) {
@@ -350,16 +331,16 @@ BOOL __export CALLBACK WelcomeDlgProc(HWND hwnd, UINT msg,
 /* Dialog: License (page 1)                                             */
 /* ------------------------------------------------------------------ */
 
-BOOL __export CALLBACK LicenseDlgProc(HWND hwnd, UINT msg,
-                                       WPARAM wp, LPARAM lp)
+BOOL CALLBACK LicenseDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     (void)lp;
     switch (msg) {
     case WM_INITDIALOG: {
         HRSRC   hrsrc;
-        HGLOBAL hres, hbuf;
+        HGLOBAL hres;
         DWORD   size;
         LPSTR   ptext, pbuf;
+        HGLOBAL hbuf;
 
         EnableWindow(GetDlgItem(hwnd, IDOK), FALSE);
 
@@ -371,14 +352,13 @@ BOOL __export CALLBACK LicenseDlgProc(HWND hwnd, UINT msg,
             hbuf  = GlobalAlloc(GMEM_MOVEABLE, size + 1);
             if (hbuf) {
                 pbuf = (LPSTR)GlobalLock(hbuf);
-                _fmemcpy(pbuf, ptext, size);
+                memcpy(pbuf, ptext, size);
                 pbuf[size] = '\0';
                 SendDlgItemMessage(hwnd, IDC_LIC_TEXT, EM_LIMITTEXT, 0, 0L);
                 SetDlgItemText(hwnd, IDC_LIC_TEXT, pbuf);
                 GlobalUnlock(hbuf);
                 GlobalFree(hbuf);
             }
-            FreeResource(hres);
         } else {
             SetDlgItemText(hwnd, IDC_LIC_TEXT,
                 "GNU GENERAL PUBLIC LICENSE\r\nVersion 3, 29 June 2007\r\n\r\n"
@@ -438,14 +418,13 @@ static void browse_for_dir(HWND hwnd, int path_ctl)
     ofn.Flags       = OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
 
     if (GetOpenFileName(&ofn)) {
-        char *bs = _fstrrchr(pathbuf, '\\');
+        char *bs = strrchr(pathbuf, '\\');
         if (bs) *bs = '\0';
         SetDlgItemText(hwnd, path_ctl, pathbuf);
     }
 }
 
-BOOL __export CALLBACK CompsDlgProc(HWND hwnd, UINT msg,
-                                     WPARAM wp, LPARAM lp)
+BOOL CALLBACK CompsDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     (void)lp;
     switch (msg) {
@@ -498,8 +477,7 @@ BOOL __export CALLBACK CompsDlgProc(HWND hwnd, UINT msg,
 /* Dialog: DLL Options (page 3, conditional)                            */
 /* ------------------------------------------------------------------ */
 
-BOOL __export CALLBACK DllOptsDlgProc(HWND hwnd, UINT msg,
-                                       WPARAM wp, LPARAM lp)
+BOOL CALLBACK DllOptsDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     (void)lp;
     switch (msg) {
@@ -524,10 +502,9 @@ BOOL __export CALLBACK DllOptsDlgProc(HWND hwnd, UINT msg,
             "Overwriting them may affect other Win32s applications.\r\n"
             "It is recommended to install DLLs into the application\r\n"
             "folder instead unless you know these versions are newer.",
-            (LPSTR)sysdir, (LPSTR)existing);
+            sysdir, existing);
         SetDlgItemText(hwnd, IDC_DLL_WARN, warn);
 
-        /* Default: install to app dir (safer) */
         CheckRadioButton(hwnd, IDC_DLL_APPDIR, IDC_DLL_SYSDIR,
                          (g_dll_dest == 1) ? IDC_DLL_SYSDIR : IDC_DLL_APPDIR);
         return TRUE;
@@ -549,8 +526,7 @@ BOOL __export CALLBACK DllOptsDlgProc(HWND hwnd, UINT msg,
 /* Dialog: Confirm (page 4)                                             */
 /* ------------------------------------------------------------------ */
 
-BOOL __export CALLBACK ConfirmDlgProc(HWND hwnd, UINT msg,
-                                       WPARAM wp, LPARAM lp)
+BOOL CALLBACK ConfirmDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     (void)lp;
     switch (msg) {
@@ -571,9 +547,9 @@ BOOL __export CALLBACK ConfirmDlgProc(HWND hwnd, UINT msg,
             "%s  Runtime DLLs (WSOCK32, COMDLG32)\r\n"
             "    Destination:  %s\r\n\r\n"
             "Click Install to begin.",
-            (LPSTR)(g_inst_c2    ? "[x]" : "[ ]"), (LPSTR)g_c2_path,
-            (LPSTR)(g_inst_putty ? "[x]" : "[ ]"), (LPSTR)g_putty_path,
-            (LPSTR)(g_inst_dlls  ? "[x]" : "[ ]"), (LPSTR)dlldir);
+            g_inst_c2    ? "[x]" : "[ ]", g_c2_path,
+            g_inst_putty ? "[x]" : "[ ]", g_putty_path,
+            g_inst_dlls  ? "[x]" : "[ ]", dlldir);
         SetDlgItemText(hwnd, IDC_CONFIRM_TXT, buf);
         return TRUE;
     }
@@ -587,13 +563,12 @@ BOOL __export CALLBACK ConfirmDlgProc(HWND hwnd, UINT msg,
 }
 
 /* ------------------------------------------------------------------ */
-/* Win16 GDI gauge bar (subclassed STATIC control)                     */
+/* GDI gauge bar (subclassed STATIC control)                            */
 /* ------------------------------------------------------------------ */
 
 #define IDC_PROG_BAR 243
 
-LRESULT __export CALLBACK GaugeSubclass(HWND hwnd, UINT msg,
-                                                WPARAM wp, LPARAM lp)
+LRESULT CALLBACK GaugeSubclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (msg == WM_PAINT) {
         PAINTSTRUCT ps;
@@ -605,12 +580,10 @@ LRESULT __export CALLBACK GaugeSubclass(HWND hwnd, UINT msg,
         GetClientRect(hwnd, &rc);
         fillw = (int)(((long)(rc.right - rc.left) * g_gauge_pct) / 100L);
 
-        /* Filled portion */
         filled = rc;
         filled.right = rc.left + fillw;
         FillRect(dc, &filled, GetStockObject(BLACK_BRUSH));
 
-        /* Empty portion */
         filled.left  = rc.left + fillw;
         filled.right = rc.right;
         FillRect(dc, &filled, GetStockObject(WHITE_BRUSH));
@@ -618,7 +591,7 @@ LRESULT __export CALLBACK GaugeSubclass(HWND hwnd, UINT msg,
         EndPaint(hwnd, &ps);
         return 0;
     }
-    return CallWindowProc((FARPROC)g_gauge_oldproc, hwnd, msg, wp, lp);
+    return CallWindowProc(g_gauge_oldproc, hwnd, msg, wp, lp);
 }
 
 static void update_gauge(int pct)
@@ -635,16 +608,16 @@ static void update_gauge(int pct)
 /* Install logic (called from progress dialog)                          */
 /* ------------------------------------------------------------------ */
 
-static void prog_log(const char FAR *text)
+static void prog_log(const char *text)
 {
     HWND hlog;
     int len;
     if (!g_hwnd_progress) return;
     hlog = GetDlgItem(g_hwnd_progress, IDC_PROG_LOG);
     len  = (int)SendMessage(hlog, WM_GETTEXTLENGTH, 0, 0L);
-    SendMessage(hlog, EM_SETSEL, len, (LPARAM)len);
+    SendMessage(hlog, EM_SETSEL, (WPARAM)len, (LPARAM)len);
     SendMessage(hlog, EM_REPLACESEL, 0, (LPARAM)text);
-    SendMessage(hlog, EM_REPLACESEL, 0, (LPARAM)(LPCSTR)"\r\n");
+    SendMessage(hlog, EM_REPLACESEL, 0, (LPARAM)"\r\n");
 }
 
 static void prog_pct(int done, int total)
@@ -662,7 +635,6 @@ static void do_install(void)
     char destdir[MAX_PATH], destpath[MAX_PATH];
     MSG msg;
 
-    /* Count files we'll actually install */
     for (i = 0; i < g_nentries; i++) {
         BYTE d = g_entries[i].dest;
         if (d == DEST_C2    && !g_inst_c2)    continue;
@@ -684,14 +656,11 @@ static void do_install(void)
         get_dest_dir((int)d, destdir);
         ensure_dir(destdir);
 
-        wsprintf(destpath, "%s\\%s", (LPSTR)destdir,
-                 (LPSTR)g_entries[i].name);
-        wsprintf(logline,  "Installing %s", (LPSTR)g_entries[i].name);
+        wsprintf(destpath, "%s\\%s", destdir, g_entries[i].name);
+        wsprintf(logline,  "Installing %s", g_entries[i].name);
         prog_log(logline);
-        SetDlgItemText(g_hwnd_progress, IDC_PROG_FILE,
-                       g_entries[i].name);
+        SetDlgItemText(g_hwnd_progress, IDC_PROG_FILE, g_entries[i].name);
 
-        /* Pump messages to keep UI alive */
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
             DispatchMessage(&msg);
 
@@ -720,8 +689,7 @@ static void do_install(void)
 /* Dialog: Progress / Done (page 5)                                     */
 /* ------------------------------------------------------------------ */
 
-BOOL __export CALLBACK ProgressDlgProc(HWND hwnd, UINT msg,
-                                        WPARAM wp, LPARAM lp)
+BOOL CALLBACK ProgressDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     (void)lp;
     switch (msg) {
@@ -731,11 +699,9 @@ BOOL __export CALLBACK ProgressDlgProc(HWND hwnd, UINT msg,
         g_prog_done     = 0;
         g_gauge_pct     = 0;
         EnableWindow(GetDlgItem(hwnd, IDOK), FALSE);
-        /* Subclass the gauge static so it draws a filled rectangle */
         hbar = GetDlgItem(hwnd, IDC_PROG_BAR);
         g_gauge_oldproc = (WNDPROC)SetWindowLong(hbar, GWL_WNDPROC,
                                                   (LONG)GaugeSubclass);
-        /* Kick off install via timer so dialog is fully visible first */
         SetTimer(hwnd, 1, 200, NULL);
         return TRUE;
     }
@@ -760,8 +726,7 @@ BOOL __export CALLBACK ProgressDlgProc(HWND hwnd, UINT msg,
 /* Minimal stub window (needed as DDE sender)                           */
 /* ------------------------------------------------------------------ */
 
-LRESULT __export CALLBACK StubWndProc(HWND hwnd, UINT msg,
-                                              WPARAM wp, LPARAM lp)
+LRESULT CALLBACK StubWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     return DefWindowProc(hwnd, msg, wp, lp);
 }
@@ -770,7 +735,7 @@ LRESULT __export CALLBACK StubWndProc(HWND hwnd, UINT msg,
 /* WinMain                                                              */
 /* ------------------------------------------------------------------ */
 
-int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev,
+int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
                    LPSTR lpCmd, int nShow)
 {
     WNDCLASS wc;
@@ -779,27 +744,21 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev,
     (void)hPrev; (void)lpCmd; (void)nShow;
     g_hinst = hInst;
 
-    /* Register stub window class for DDE sender */
-    if (!hPrev) {
-        memset(&wc, 0, sizeof(wc));
-        wc.lpfnWndProc   = StubWndProc;
-        wc.hInstance     = hInst;
-        wc.lpszClassName = "Setup16Stub";
-        RegisterClass(&wc);
-    }
-    g_hwnd_main = CreateWindow("Setup16Stub", "",
+    memset(&wc, 0, sizeof(wc));
+    wc.lpfnWndProc   = StubWndProc;
+    wc.hInstance     = hInst;
+    wc.lpszClassName = "Setup32Stub";
+    RegisterClass(&wc);
+    g_hwnd_main = CreateWindow("Setup32Stub", "",
         WS_OVERLAPPED, 0, 0, 0, 0, NULL, NULL, hInst, NULL);
 
-    /* Check bundle is present */
     if (!load_bundle()) {
         MessageBox(NULL,
             "This installer has not been bundled with application files.\n\n"
             "Run tools/mksetup.py to create a distributable setup.exe.",
             "AeldreC2 Setup", MB_OK | MB_ICONEXCLAMATION);
-        /* Allow running anyway for testing the UI */
     }
 
-    /* Wizard loop */
     page = 0;
     for (;;) {
         switch (page) {
@@ -820,7 +779,7 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev,
                 result = DialogBox(hInst, MAKEINTRESOURCE(IDD_DLLOPTS),
                                    g_hwnd_main, DllOptsDlgProc);
             else
-                result = WIZ_NEXT;   /* skip DLL options page */
+                result = WIZ_NEXT;
             break;
         case 4:
             result = DialogBox(hInst, MAKEINTRESOURCE(IDD_CONFIRM),
@@ -840,14 +799,13 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev,
                     "Cancel installation?", "Setup",
                     MB_YESNO | MB_ICONQUESTION) == IDYES)
                 break;
-            /* stay on current page */
             continue;
         }
 
         if (result == WIZ_NEXT) {
-            if (page >= 5) break;   /* done */
+            if (page >= 5) break;
             page++;
-        } else {   /* WIZ_BACK */
+        } else {
             if (page > 0) page--;
         }
     }

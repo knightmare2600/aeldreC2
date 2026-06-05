@@ -425,7 +425,12 @@ OBJ_ROOTSHARED = &
 
 all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe setup16.exe .SYMBOLIC
 
-win32s: putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe markuped.exe wget.exe lightman.exe flynn.exe setup16.exe .SYMBOLIC
+win32s: pageant.exe putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe ipcalc16.exe clu.exe grid.exe ipcalc32.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe setup16.exe setup32.exe .SYMBOLIC
+
+dist: win32s .SYMBOLIC
+	mkdir -p ../output/compiled ../output/exe
+	python3 ../tools/mksetup.py --out16 ../output/exe/setup16.exe --out32 ../output/exe/setup32.exe
+	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
 
 # =================================================================
 # be_list.c — per-target compilation with different defines
@@ -1016,6 +1021,20 @@ setup16.res: setup16.rc ../gpl30.txt
 setup16.exe: setup16.obj setup16.res
 	$(WLINK16) system windows name $@ file setup16.obj library commdlg.lib
 	$(WRC16) setup16.res $@
+
+# =================================================================
+# setup32.exe -- Win32 self-extracting installer
+# =================================================================
+
+setup32.obj: setup32.c
+	$(CC) $(COMPAT) $(CFLAGS) -fo=$@ -c setup32.c
+
+setup32.res: setup32.rc ../gpl30.txt
+	$(RCPATH) $(RCFLAGS) setup32.rc -o setup32.res
+
+setup32.exe: setup32.obj setup32.res
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) setup32.obj
+	wrc setup32.res $@
 
 # =================================================================
 # aelctl.dll — Win32s-compatible common controls shim
