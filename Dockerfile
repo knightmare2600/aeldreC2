@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates wget \
         gcc-mingw-w64-i686 \
         binutils-mingw-w64-i686 \
-        python3 python3-pip \
+        python3 python3-pip xz-utils \
     && pip3 install --no-cache-dir Pillow \
     && rm -rf /var/lib/apt/lists/*
 
