@@ -82,6 +82,26 @@ Tank Programs provide:
 
 ---
 
+### Lightman
+
+CLI operator client.
+
+Named after David Lightman from *WarGames*.
+
+Connects to a running Joshua instance using the server key. Runs in a GUI window compatible with Win32s / NT 3.1+. Planned Linux support in a future release.
+
+---
+
+### Flynn
+
+GUI operator client with the same feature parity as Lightman.
+
+Named after Kevin Flynn from *Tron*.
+
+Two-pane layout (operator list + log). Connection settings entered via dialog on startup; host/port/key can also be pre-filled from the command line.
+
+---
+
 ### CLU
 
 The implant generator.
@@ -266,6 +286,8 @@ All binaries are built to `windows/`. Build all at once with `./build-c2.sh`, or
 | `tank.exe` | Win32s / NT / 95 | Implant — connect-back agent |
 | `tank16.exe` | Win 3.1 / WFW 3.11 | Implant — 16-bit connect-back agent |
 | `clu.exe` | Win32s / NT / 95 | Implant generator / binary patcher |
+| `lightman.exe` | Win32s / NT / 95 | CLI operator client (connects to Joshua) |
+| `flynn.exe` | Win32s / NT / 95 | GUI operator client (connects to Joshua) |
 | `ncwfw.exe` | Win32s / NT / 95 | Netcat-style TCP relay |
 | `grid.exe` | Win32s / NT / 95 | TCP port scanner |
 | `ipcalc32.exe` | Win32s / NT / 95 | Subnet calculator |
@@ -285,7 +307,61 @@ rem Start the controller; it listens immediately on TCP 4444
 joshua.exe
 ```
 
-Sessions appear in the left panel as implants connect. Each session opens as an MDI child window. Use the Tank menu to issue tasks: Sysinfo, Process List, Directory Listing, Get File, Put File, Screenshot.
+On startup, Joshua generates an 8-digit hex **server key** and prints it in the Server Log window:
+
+```
+===== AeldreC2 Joshua =====
+Server key : A3F7B291
+Connect with:
+  lightman.exe <your-ip> 4444 A3F7B291
+  flynn.exe    <your-ip> 4444 A3F7B291
+===========================
+```
+
+Sessions (tanks + operator clients) appear in the left panel. Each session opens as an MDI child window. Use the Tank menu to issue tasks: Sysinfo, Process List, Directory Listing, Get File, Put File, Screenshot.
+
+**Operator / moderator commands** — type in the Server Log console or send from an operator client:
+
+| Command | Who | Effect |
+|---------|-----|--------|
+| `/givemod <handle>` | console (always) or mod | Promote operator to moderator |
+| `/removemod <handle>` | console or mod | Demote moderator (last mod protected) |
+| `/ops` | any | List connected operators |
+| `/tanks` | any | List connected implants |
+| `/kick <handle>` | console or mod | Disconnect an operator |
+| `/key` | console only | Re-display the server key |
+
+---
+
+### lightman.exe — CLI Operator Client
+
+Named after David Lightman from *WarGames*.
+
+```bat
+lightman.exe 172.16.93.1 4444 A3F7B291
+rem  Prompts for your handle (nom-de-plume), then connects
+```
+
+A single window shows the operator log. Type commands or chat in the input field at the bottom. Admin commands start with `/`.
+
+---
+
+### flynn.exe — GUI Operator Client
+
+Named after Kevin Flynn from *Tron*.
+
+```bat
+flynn.exe
+rem  Connection dialog: host, port, key, handle — then connects
+rem  Or pre-fill from command line:
+flynn.exe 172.16.93.1 4444 A3F7B291
+```
+
+Two-pane layout: operator list on the left, log + input on the right.
+
+**TODO:** Icons for `lightman.exe` and `flynn.exe` (remind me).
+
+---
 
 ---
 

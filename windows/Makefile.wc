@@ -423,9 +423,9 @@ OBJ_ROOTSHARED = &
 # Default target
 # =================================================================
 
-all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe .SYMBOLIC
+all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe .SYMBOLIC
 
-win32s: putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe markuped.exe wget.exe .SYMBOLIC
+win32s: putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe markuped.exe wget.exe lightman.exe flynn.exe .SYMBOLIC
 
 # =================================================================
 # be_list.c — per-target compilation with different defines
@@ -860,6 +860,26 @@ wget16.res: wget.rc wget.ico
 wget16.exe: wget16.obj wget16.res
 	wlink system windows name $@ file wget16.obj library winsock.lib
 	wrc wget16.res $@
+
+# =================================================================
+# lightman.exe -- CLI operator client (connects to Joshua)
+# =================================================================
+
+lightman.obj: lightman.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c lightman.c
+
+lightman.exe: lightman.obj
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) lightman.obj wsock32.lib
+
+# =================================================================
+# flynn.exe -- GUI operator client (connects to Joshua)
+# =================================================================
+
+flynn.obj: flynn.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c flynn.c
+
+flynn.exe: flynn.obj
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) flynn.obj wsock32.lib
 
 # =================================================================
 # putty.exe — GUI SSH/Telnet/Serial terminal

