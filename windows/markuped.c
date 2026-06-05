@@ -124,6 +124,7 @@ typedef struct {
     int   line_h;
     int   is_rule;
     int   is_codeblk;
+    int   is_task;     /* 1=unchecked [ ], 2=checked [x] */
     int   nruns;
     InlineRun runs[16];
     HFONT font;
@@ -403,17 +404,33 @@ static void md_parse(const char *src)
             continue;
         }
 
-        /* unordered list */
-        if ((line[0] == '-' || line[0] == '*') && line[1] == ' ') {
-            char bullet[1020];
-            wsprintfA(bullet, "\x95 %s", line + 2);  /* bullet char */
-            pl->indent = 8;
-            pl->font   = g_font_body;
-            pl->line_h = 18;
-            pl->nruns  = parse_inline(bullet, pl->runs,
-                                      sizeof(pl->runs)/sizeof(pl->runs[0]));
-            g_nplines++;
-            continue;
+        /* unordered list / task list */
+        if ((line[0] == '-' || line[0] == '*' || line[0] == '+') && line[1] == ' ') {
+            const char *rest = line + 2;
+            if (rest[0] == '[' &&
+                (rest[1] == ' ' || rest[1] == 'x' || rest[1] == 'X') &&
+                rest[2] == ']' && rest[3] == ' ') {
+                /* GitHub-style task list item */
+                pl->is_task = (rest[1] == 'x' || rest[1] == 'X') ? 2 : 1;
+                pl->indent  = 24;
+                pl->font    = g_font_body;
+                pl->line_h  = 18;
+                pl->nruns   = parse_inline(rest + 4, pl->runs,
+                                           sizeof(pl->runs)/sizeof(pl->runs[0]));
+                g_nplines++;
+                continue;
+            }
+            {
+                char bullet[1020];
+                wsprintfA(bullet, "\x95 %s", rest);  /* bullet char */
+                pl->indent = 8;
+                pl->font   = g_font_body;
+                pl->line_h = 18;
+                pl->nruns  = parse_inline(bullet, pl->runs,
+                                          sizeof(pl->runs)/sizeof(pl->runs[0]));
+                g_nplines++;
+                continue;
+            }
         }
 
         /* ordered list  "1. " */
@@ -522,6 +539,27 @@ static void preview_paint(HWND hwnd)
             FillRect(dc, &cr, br_code);
         }
 
+        /* task list checkbox */
+        if (pl->is_task) {
+            RECT cbr;
+            HPEN old_pen, pen;
+            cbr.left   = 8;
+            cbr.right  = 20;
+            cbr.top    = y + 3;
+            cbr.bottom = y + 15;
+            FillRect(dc, &cbr, (HBRUSH)(COLOR_WINDOW + 1));
+            FrameRect(dc, &cbr, (HBRUSH)GetStockObject(BLACK_BRUSH));
+            if (pl->is_task == 2) {
+                pen = CreatePen(PS_SOLID, 2, RGB(0, 0, 0));
+                old_pen = (HPEN)SelectObject(dc, pen);
+                MoveToEx(dc, 11, y + 9, NULL);
+                LineTo(dc,  13, y + 13);
+                LineTo(dc,  19, y + 5);
+                SelectObject(dc, old_pen);
+                DeleteObject(pen);
+            }
+        }
+
         if (pl->font)
             old_font = (HFONT)SelectObject(dc, pl->font);
         else
@@ -551,8 +589,9 @@ static void preview_paint(HWND hwnd)
                 case RT_CODE:
                     run_font = g_font_code;
                     if (pl->is_codeblk != 1) {
-                        /* inline code highlight */
+                        /* inline code highlight — measure with code font */
                         RECT cr2;
+                        SelectObject(dc, g_font_code);
                         GetTextExtentPoint32(dc, r->text,
                                              lstrlenA(r->text), &sz);
                         cr2.left   = x - 1;
@@ -666,7 +705,7 @@ static LRESULT CALLBACK PreviewWndProc(HWND hwnd, UINT msg,
 /* Preview refresh                                                      */
 /* ------------------------------------------------------------------ */
 
-static void preview_refresh(void)
+static void preview_refresh(int reset_scroll)
 {
     int  len;
     char *buf;
@@ -676,7 +715,7 @@ static void preview_refresh(void)
     if (!buf) return;
     GetWindowText(g_hwnd_edit, buf, len + 1);
 
-    g_prev_scroll = 0;
+    if (reset_scroll) g_prev_scroll = 0;
     md_parse(buf);
     GlobalFree((HGLOBAL)buf);
 
@@ -695,7 +734,7 @@ static void preview_refresh(void)
                 si.nMin   = 0;
                 si.nMax   = total_h;
                 si.nPage  = rc.bottom - rc.top;
-                si.nPos   = 0;
+                si.nPos   = g_prev_scroll;
                 SetScrollInfo(g_hwnd_prev, SB_VERT, &si, TRUE);
             }
         }
@@ -882,7 +921,7 @@ static void file_new(void)
     g_filepath[0] = '\0';
     g_dirty = FALSE;
     file_set_title();
-    preview_refresh();
+    preview_refresh(1);
 }
 
 static void file_open(void)
@@ -924,7 +963,7 @@ static void file_open(void)
     lstrcpynA(g_filepath, path, MAX_PATH - 1);
     g_dirty = FALSE;
     file_set_title();
-    preview_refresh();
+    preview_refresh(1);
 }
 
 static int file_save_to(const char *path)
@@ -1112,7 +1151,7 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg,
 
         toolbar_create(hwnd);
         SetMenu(hwnd, build_menu());
-        preview_refresh();
+        preview_refresh(1);
         return 0;
 
     case WM_SIZE:
@@ -1164,6 +1203,7 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg,
             g_show_prev = !g_show_prev;
             ShowWindow(g_hwnd_prev, g_show_prev ? SW_SHOW : SW_HIDE);
             layout_children(hwnd);
+            if (g_show_prev) preview_refresh(0);
             break;
 
         /* edit control notifications */
@@ -1171,7 +1211,8 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg,
             if (HIWORD(wp) == EN_CHANGE) {
                 g_dirty = TRUE;
                 file_set_title();
-                SetTimer(hwnd, PREVIEW_TIMER, PREVIEW_DELAY, NULL);
+                if (g_show_prev)
+                    SetTimer(hwnd, PREVIEW_TIMER, PREVIEW_DELAY, NULL);
             }
             break;
 
@@ -1181,7 +1222,8 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg,
                 "markuped  \x97  Markdown Editor\r\n"
                 "Win32s / Win32 compatible\r\n\r\n"
                 "Supports: headers, bold, italic, inline code,\r\n"
-                "fenced code blocks, blockquotes, lists, HR, links.\r\n\r\n"
+                "fenced code blocks, blockquotes, lists (-, *, +),\r\n"
+                "task checkboxes (- [ ] / - [x]), HR, links.\r\n\r\n"
                 "\xc6ldreC2 toolkit",
                 "About markuped",
                 MB_OK | MB_ICONINFORMATION);
@@ -1192,7 +1234,7 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg,
     case WM_TIMER:
         if (wp == PREVIEW_TIMER) {
             KillTimer(hwnd, PREVIEW_TIMER);
-            preview_refresh();
+            preview_refresh(0);
         }
         return 0;
 
@@ -1330,7 +1372,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
                 lstrcpynA(g_filepath, path, MAX_PATH - 1);
                 g_dirty = FALSE;
                 file_set_title();
-                preview_refresh();
+                preview_refresh(1);
             }
         }
     }
@@ -1353,6 +1395,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
                     g_show_prev = !g_show_prev;
                     ShowWindow(g_hwnd_prev, g_show_prev ? SW_SHOW : SW_HIDE);
                     layout_children(g_hwnd_frame);
+                    if (g_show_prev) preview_refresh(0);
                     continue;
                 }
             }

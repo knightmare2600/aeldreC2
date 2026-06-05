@@ -1,0 +1,167 @@
+/* setup16.rc -- resources for AeldreC2 Win16 installer */
+
+#include <windows.h>
+
+/* ------------------------------------------------------------------ */
+/* GPL3 text embedded as binary resource                               */
+/* ------------------------------------------------------------------ */
+100 RCDATA "../gpl30.txt"
+
+/* ------------------------------------------------------------------ */
+/* IDD_WELCOME (101)                                                   */
+/* ------------------------------------------------------------------ */
+101 DIALOG 30, 20, 300, 175
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "AeldreC2 / Putty-Win32s Setup"
+FONT 8, "System"
+BEGIN
+    LTEXT "AeldreC2 & Putty-Win32s Installation", -1,
+          10, 10, 280, 11
+    LTEXT "________________________________________", -1,
+          10, 22, 280, 8
+    LTEXT "Welcome to the AeldreC2 installation program.", -1,
+          10, 38, 280, 10
+    LTEXT "This wizard will install the AeldreC2 C2 framework", -1,
+          10, 51, 280, 10
+    LTEXT "and optionally the Putty-Win32s tools.", -1,
+          10, 62, 280, 10
+    LTEXT "On the next page you must read and accept the GNU", -1,
+          10, 78, 280, 10
+    LTEXT "General Public License version 3 to proceed.", -1,
+          10, 89, 280, 10
+    LTEXT "Click Next to continue, or Cancel to exit.", -1,
+          10, 105, 280, 10
+    DEFPUSHBUTTON "&Next >", IDOK,     234, 154, 56, 14
+    PUSHBUTTON    "Cancel",  IDCANCEL, 172, 154, 56, 14
+END
+
+/* ------------------------------------------------------------------ */
+/* IDD_LICENSE (102)                                                   */
+/* ------------------------------------------------------------------ */
+102 DIALOG 30, 20, 300, 200
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "License Agreement"
+FONT 8, "System"
+BEGIN
+    LTEXT "GNU General Public License Version 3", -1,
+          10, 8, 280, 10
+    EDITTEXT IDC_LIC_TEXT,
+          10, 20, 280, 130,
+          ES_MULTILINE | ES_READONLY | WS_VSCROLL | WS_BORDER
+    AUTOCHECKBOX
+          "I have read and I accept the terms of the GNU GPL 3.0",
+          IDC_LIC_ACCEPT, 10, 156, 280, 12
+    DEFPUSHBUTTON "&Accept", IDOK,       234, 178, 56, 14
+    PUSHBUTTON    "Cancel",  IDCANCEL,   172, 178, 56, 14
+    PUSHBUTTON    "< &Back", IDC_BACK,   110, 178, 56, 14
+END
+
+/* ------------------------------------------------------------------ */
+/* IDD_COMPONENTS (103)                                                */
+/* ------------------------------------------------------------------ */
+103 DIALOG 30, 20, 300, 200
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Select Components"
+FONT 8, "System"
+BEGIN
+    LTEXT "Choose what to install and where:", -1,
+          10, 8, 280, 10
+
+    AUTOCHECKBOX "AeldreC2 C2 Framework",
+          IDC_C2_CHECK, 10, 26, 130, 12
+    EDITTEXT IDC_C2_PATH,
+          10, 40, 230, 12, ES_AUTOHSCROLL | WS_BORDER
+    PUSHBUTTON "...", IDC_C2_BROWSE,
+          246, 40, 24, 12
+
+    LTEXT "________________________________________", -1,
+          10, 58, 280, 8
+
+    AUTOCHECKBOX "Putty-Win32s Tools",
+          IDC_PUTTY_CHECK, 10, 72, 130, 12
+    EDITTEXT IDC_PUTTY_PATH,
+          10, 86, 230, 12, ES_AUTOHSCROLL | WS_BORDER
+    PUSHBUTTON "...", IDC_PUTTY_BROWSE,
+          246, 86, 24, 12
+
+    LTEXT "________________________________________", -1,
+          10, 104, 280, 8
+
+    AUTOCHECKBOX "Install runtime DLLs (WSOCK32.DLL, COMDLG32.DLL)",
+          IDC_DLL_CHECK, 10, 118, 280, 12
+
+    LTEXT "Note: DLLs are needed if not already in C:\\Windows\\System.", -1,
+          10, 133, 280, 10
+
+    DEFPUSHBUTTON "&Next >",  IDOK,      234, 178, 56, 14
+    PUSHBUTTON    "Cancel",   IDCANCEL,  172, 178, 56, 14
+    PUSHBUTTON    "< &Back",  IDC_BACK,  110, 178, 56, 14
+END
+
+/* ------------------------------------------------------------------ */
+/* IDD_DLLOPTS (104)                                                   */
+/* ------------------------------------------------------------------ */
+104 DIALOG 30, 20, 300, 190
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Runtime DLL Installation"
+FONT 8, "System"
+BEGIN
+    LTEXT "DLL Installation Options", -1,
+          10, 8, 280, 10
+
+    EDITTEXT IDC_DLL_WARN,
+          10, 22, 280, 80,
+          ES_MULTILINE | ES_READONLY | WS_VSCROLL | WS_BORDER | NOT WS_TABSTOP
+
+    AUTORADIOBUTTON
+          "Install DLLs to application folder (recommended)",
+          IDC_DLL_APPDIR, 10, 110, 280, 12, WS_GROUP
+    AUTORADIOBUTTON
+          "Install DLLs to C:\\Windows\\System (may affect other apps)",
+          IDC_DLL_SYSDIR, 10, 126, 280, 12
+
+    DEFPUSHBUTTON "&Next >",  IDOK,      234, 168, 56, 14
+    PUSHBUTTON    "Cancel",   IDCANCEL,  172, 168, 56, 14
+    PUSHBUTTON    "< &Back",  IDC_BACK,  110, 168, 56, 14
+END
+
+/* ------------------------------------------------------------------ */
+/* IDD_CONFIRM (105)                                                   */
+/* ------------------------------------------------------------------ */
+105 DIALOG 30, 20, 300, 190
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Ready to Install"
+FONT 8, "System"
+BEGIN
+    EDITTEXT IDC_CONFIRM_TXT,
+          10, 10, 280, 138,
+          ES_MULTILINE | ES_READONLY | WS_VSCROLL | WS_BORDER | NOT WS_TABSTOP
+
+    DEFPUSHBUTTON "&Install", IDOK,      234, 168, 56, 14
+    PUSHBUTTON    "Cancel",   IDCANCEL,  172, 168, 56, 14
+    PUSHBUTTON    "< &Back",  IDC_BACK,  110, 168, 56, 14
+END
+
+/* ------------------------------------------------------------------ */
+/* IDD_PROGRESS (106)                                                  */
+/* ------------------------------------------------------------------ */
+106 DIALOG 30, 20, 300, 200
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Installing..."
+FONT 8, "System"
+BEGIN
+    EDITTEXT IDC_PROG_LOG,
+          10, 10, 280, 130,
+          ES_MULTILINE | ES_READONLY | WS_VSCROLL | WS_BORDER | NOT WS_TABSTOP
+    LTEXT "Current file:", -1,
+          10, 148, 60, 10
+    LTEXT "", IDC_PROG_FILE,
+          74, 148, 216, 10
+    /* Gauge bar: subclassed STATIC — GaugeSubclass paints the fill */
+    LTEXT "", 243,
+          10, 159, 280, 10, WS_BORDER
+    LTEXT "", IDC_PROG_PCT,
+          10, 172, 280, 8
+    DEFPUSHBUTTON "&Finish", IDOK,
+          234, 183, 56, 14
+END

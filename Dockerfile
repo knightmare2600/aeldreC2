@@ -17,10 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The tarball has a top-level "watcom/" directory; extracting to /opt/ gives /opt/watcom/
 # If the upstream release renames the root dir, adjust accordingly.
 ARG OW_URL=https://github.com/open-watcom/open-watcom-v2/releases/download/Current-build/ow-snapshot.tar.gz
-RUN wget -q -O /tmp/ow.tar.gz "$OW_URL" \
+RUN wget -nv -O /tmp/ow.tar.gz "$OW_URL" \
     && tar -xzf /tmp/ow.tar.gz -C /opt \
     && rm /tmp/ow.tar.gz \
-    && test -x /opt/watcom/binl64/wmake || test -x /opt/watcom/binl/wmake
+    && ls /opt/watcom/binl64/ /opt/watcom/binl/ 2>/dev/null | grep wmake \
+    && ( test -x /opt/watcom/binl64/wmake || test -x /opt/watcom/binl/wmake )
 
 ENV WATCOM=/opt/watcom
 ENV PATH="${PATH}:/opt/watcom/binl64:/opt/watcom/binl"

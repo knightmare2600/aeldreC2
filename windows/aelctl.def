@@ -1,0 +1,4 @@
+LIBRARY AELCTL
+EXPORTS
+  InitCommonControls  @1
+  AelCtl_Init         @2

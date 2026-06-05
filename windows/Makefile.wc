@@ -423,9 +423,9 @@ OBJ_ROOTSHARED = &
 # Default target
 # =================================================================
 
-all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe .SYMBOLIC
+all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe setup16.exe .SYMBOLIC
 
-win32s: putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe markuped.exe wget.exe lightman.exe flynn.exe .SYMBOLIC
+win32s: putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe markuped.exe wget.exe lightman.exe flynn.exe setup16.exe .SYMBOLIC
 
 # =================================================================
 # be_list.c — per-target compilation with different defines
@@ -694,8 +694,8 @@ WINSFTP_OBJS = &
 	ssh_sftp.obj &
 	sftpcommon.obj
 
-winsftp.exe: $(WINSFTP_OBJS) psftp.res
-	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) $(WINSFTP_OBJS) comctl32.lib
+winsftp.exe: $(WINSFTP_OBJS) psftp.res aelctl.lib
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) $(WINSFTP_OBJS) aelctl.lib
 	wrc psftp.res $@
 
 # =================================================================
@@ -998,11 +998,52 @@ puttytel.exe: $(PUTTYTEL_OBJS) puttytel.res
 	wrc puttytel.res $@
 
 # =================================================================
+# setup16.exe -- Win16 self-extracting installer
+# Compiled with 16-bit wcc (large model, Windows target).
+# After build, run: python3 ../tools/mksetup.py  to bundle EXEs.
+# =================================================================
+
+WCC16    = wcc
+WLINK16  = wlink
+WRC16    = wrc
+
+setup16.obj: setup16.c
+	$(WCC16) -ml -bt=windows -zu -s -I/opt/watcom/h/win -fo=$@ setup16.c
+
+setup16.res: setup16.rc ../gpl30.txt
+	$(WRC16) -q -bt=windows -r -I/opt/watcom/h/win -fo=$@ setup16.rc
+
+setup16.exe: setup16.obj setup16.res
+	$(WLINK16) system windows name $@ file setup16.obj library commdlg.lib
+	$(WRC16) setup16.res $@
+
+# =================================================================
+# aelctl.dll — Win32s-compatible common controls shim
+#
+# Provides msctls_progress32, msctls_statusbar32, msctls_updown32.
+# On Win95/NT4+: delegates to COMCTL32.DLL when present.
+# On Win32s/NT3.1: registers GDI-based shim window classes.
+#
+# All Win32 targets that need COMCTL32 controls link aelctl.lib
+# instead of comctl32.lib; source code is unchanged.
+# =================================================================
+
+aelctl.obj: aelctl.c aelctl.h
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -bd -fo=$@ -c aelctl.c
+
+aelctl.lib: aelctl.obj aelctl.def
+	wlink system nt_dll initinstance terminstance &
+	    name aelctl.dll &
+	    file aelctl.obj &
+	    def aelctl.def &
+	    option implib=aelctl.lib
+
+# =================================================================
 # Clean
 # =================================================================
 
 clean: .SYMBOLIC
-	-$(RM) -f *.obj *.exe *.res *.err *.map
+	-$(RM) -f *.obj *.exe *.res *.err *.map aelctl.dll aelctl.lib
 
 # =================================================================
 # Per-file compilation rules — utils/

@@ -70,15 +70,25 @@ case "$TARGET" in
         run wget16.exe
         run lightman.exe
         run flynn.exe
+        run setup16.exe
         echo ""
-        echo "Built: joshua.exe tank.exe tank16.exe clu.exe ncwfw.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe"
+        echo "Built: joshua.exe tank.exe tank16.exe clu.exe ncwfw.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe setup16.exe"
         echo "Output: $REPO/windows/"
+        echo ""
+        echo "To bundle into a self-extracting setup.exe:"
+        echo "  python3 tools/mksetup.py"
+        ;;
+    setup)
+        run setup16.exe
+        echo "Bundling..."
+        docker run --rm -v "$REPO":/src -w /src openwatcom/owtools:latest \
+            python3 tools/mksetup.py
         ;;
     all)
         # full PuTTY + C2 suite — slow
         run all
         ;;
-    joshua|tank|tank16|clu|ncwfw|grid|ipcalc32|ipcalc16|markuped|wget|wget16|lightman|flynn)
+    joshua|tank|tank16|clu|ncwfw|grid|ipcalc32|ipcalc16|markuped|wget|wget16|lightman|flynn|setup16)
         run "${TARGET}.exe"
         ;;
     *)
