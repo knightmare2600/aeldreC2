@@ -460,6 +460,11 @@ static int wininet_load(void)
 #define WM_WGET_DONE    (WM_USER + 1)
 #define WM_WGET_PROGRESS (WM_USER + 2)
 
+/* URL input dialog */
+#define IDC_URLDLG_URL  110
+#define IDC_URLDLG_OUT  111
+#define IDC_URLDLG_OK   112
+
 static HWND   g_hwnd_prog  = NULL;
 static HWND   g_hwnd_url   = NULL;
 static HWND   g_hwnd_file  = NULL;
@@ -820,6 +825,123 @@ static void console_progress(const char *fname)
 /* Win32 WinMain                                                        */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* GUI URL input dialog                                                 */
+/* ------------------------------------------------------------------ */
+
+static char g_dlg_url_result[1024] = "";
+static char g_dlg_out_result[256]  = "";
+static int  g_dlg_ok = 0;
+static HWND g_dlg_url_wnd  = NULL;
+static HWND g_dlg_out_wnd  = NULL;
+static HWND g_urldlg       = NULL;
+
+static LRESULT CALLBACK UrlDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    (void)lp;
+    switch (msg) {
+    case WM_CREATE: {
+        HFONT hf = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HWND  hw;
+        int   y = 12;
+
+        hw = CreateWindow("STATIC", "URL:",
+                          WS_CHILD|WS_VISIBLE|SS_LEFT,
+                          8,y+3,60,18,hwnd,NULL,g_hinst,NULL);
+        SendMessage(hw,WM_SETFONT,(WPARAM)hf,FALSE);
+        g_dlg_url_wnd = CreateWindow("EDIT","",
+                          WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL,
+                          72,y,300,22,hwnd,(HMENU)IDC_URLDLG_URL,g_hinst,NULL);
+        SendMessage(g_dlg_url_wnd,WM_SETFONT,(WPARAM)hf,FALSE);
+
+        y = 42;
+        hw = CreateWindow("STATIC","Save as (optional):",
+                          WS_CHILD|WS_VISIBLE|SS_LEFT,
+                          8,y+3,130,18,hwnd,NULL,g_hinst,NULL);
+        SendMessage(hw,WM_SETFONT,(WPARAM)hf,FALSE);
+        g_dlg_out_wnd = CreateWindow("EDIT","",
+                          WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL,
+                          142,y,230,22,hwnd,(HMENU)IDC_URLDLG_OUT,g_hinst,NULL);
+        SendMessage(g_dlg_out_wnd,WM_SETFONT,(WPARAM)hf,FALSE);
+
+        y = 76;
+        hw = CreateWindow("BUTTON","Download",
+                          WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON,
+                          100,y,100,26,hwnd,(HMENU)IDC_URLDLG_OK,g_hinst,NULL);
+        SendMessage(hw,WM_SETFONT,(WPARAM)hf,FALSE);
+        hw = CreateWindow("BUTTON","Cancel",
+                          WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
+                          214,y,100,26,hwnd,(HMENU)IDCANCEL,g_hinst,NULL);
+        SendMessage(hw,WM_SETFONT,(WPARAM)hf,FALSE);
+
+        SetFocus(g_dlg_url_wnd);
+        return 0;
+    }
+    case WM_COMMAND:
+        if (LOWORD(wp) == IDCANCEL || LOWORD(wp) == IDABORT) {
+            g_dlg_ok = 0; DestroyWindow(hwnd); return 0;
+        }
+        if (LOWORD(wp) == IDC_URLDLG_OK) {
+            GetWindowText(g_dlg_url_wnd, g_dlg_url_result, sizeof(g_dlg_url_result)-1);
+            GetWindowText(g_dlg_out_wnd, g_dlg_out_result, sizeof(g_dlg_out_result)-1);
+            if (!g_dlg_url_result[0]) {
+                MessageBoxA(hwnd, "Please enter a URL.", "wget", MB_OK|MB_ICONWARNING);
+                return 0;
+            }
+            g_dlg_ok = 1; DestroyWindow(hwnd); return 0;
+        }
+        return 0;
+    case WM_CLOSE:
+        g_dlg_ok = 0; DestroyWindow(hwnd); return 0;
+    case WM_DESTROY:
+        g_urldlg = NULL; g_dlg_url_wnd = NULL; g_dlg_out_wnd = NULL;
+        return 0;
+    }
+    return DefWindowProc(hwnd, msg, wp, lp);
+}
+
+static int show_url_dialog(void)
+{
+    MSG  msg;
+    RECT sr; int sw, sh, dw, dh;
+
+    g_dlg_ok = 0;
+    g_dlg_url_result[0] = '\0';
+    g_dlg_out_result[0] = '\0';
+
+    {
+        WNDCLASS wc2;
+        memset(&wc2, 0, sizeof(wc2));
+        wc2.lpfnWndProc   = UrlDlgProc;
+        wc2.hInstance     = g_hinst;
+        wc2.hbrBackground = (HBRUSH)(COLOR_BTNFACE+1);
+        wc2.lpszClassName = "WgetUrlDlg";
+        wc2.hCursor       = LoadCursor(NULL, IDC_ARROW);
+        RegisterClass(&wc2);
+    }
+
+    g_urldlg = CreateWindowEx(WS_EX_DLGMODALFRAME, "WgetUrlDlg",
+                    "wget  \x97  Download File",
+                    WS_POPUP|WS_CAPTION|WS_SYSMENU,
+                    0,0,390,118,NULL,NULL,g_hinst,NULL);
+    if (!g_urldlg) return 0;
+
+    SystemParametersInfo(SPI_GETWORKAREA, 0, &sr, 0);
+    sw = sr.right - sr.left; sh = sr.bottom - sr.top;
+    { RECT dr; GetWindowRect(g_urldlg, &dr); dw=dr.right-dr.left; dh=dr.bottom-dr.top; }
+    SetWindowPos(g_urldlg, HWND_TOP,
+                 sr.left+(sw-dw)/2, sr.top+(sh-dh)/2, 0,0, SWP_NOSIZE);
+    ShowWindow(g_urldlg, SW_SHOW);
+
+    while (g_urldlg) {
+        if (!GetMessage(&msg,NULL,0,0)) break;
+        if (!IsDialogMessage(g_urldlg, &msg)) {
+            TranslateMessage(&msg); DispatchMessage(&msg);
+        }
+    }
+    return g_dlg_ok;
+}
+
 static int  g_argc = 0;
 static char *g_argv[32];
 static char  g_cmdcopy[2048];
@@ -867,13 +989,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
             fprintf(stderr,
                 "Usage: wget <URL> [-O filename] [-q]\n"
                 "Schemes: http, https (WinInet), ftp (WinInet)\n");
+            return 1;
         } else {
-            MessageBoxA(NULL,
-                "Usage: wget <URL> [-O filename] [-q]\n"
-                "Schemes: http, https (WinInet), ftp (WinInet)",
-                "wget", MB_OK | MB_ICONINFORMATION);
+            /* GUI mode: ask for URL and optional filename */
+            if (!show_url_dialog()) return 0;
+            lstrcpynA(url_arg, g_dlg_url_result, sizeof(url_arg) - 1);
+            if (g_dlg_out_result[0])
+                lstrcpynA(out_arg, g_dlg_out_result, sizeof(out_arg) - 1);
         }
-        return 1;
     }
 
     parse_url(url_arg, &pu);
@@ -921,7 +1044,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
         g_hwnd_prog = CreateWindow("WgetProgress",
             "wget \x97 Downloading",
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-            CW_USEDEFAULT, CW_USEDEFAULT, 412, 148,
+            CW_USEDEFAULT, CW_USEDEFAULT, 412, 200,
             NULL, NULL, hInst, NULL);
 
         if (g_hwnd_prog) {

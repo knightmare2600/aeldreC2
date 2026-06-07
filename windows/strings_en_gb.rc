@@ -1,0 +1,168 @@
+/*
+ * strings_en_gb.rc  --  AeldreC2  --  English (British)  --  base offset 1000
+ *
+ * This is the default language.  Colour has a 'u'.  It is a programme.
+ * We speak the Queen's English here, and we are not sorry about it.
+ */
+
+STRINGTABLE
+BEGIN
+    /* Common */
+    1001  "OK"
+    1002  "Cancel"
+    1003  "Error"
+    1004  "Close"
+    1005  "Browse..."
+    1006  "Save"
+    1007  "Copy"
+    1008  "New"
+    1009  "Open"
+    1010  "Yes"
+    1011  "No"
+    1012  "Help"
+    1013  "About"
+    1014  "Exit"
+    1015  "Connect"
+    1016  "Disconnect"
+    1017  "Stop"
+    1018  "Generate"
+    1019  "Send"
+    1020  "Ready."
+    1021  "This software is written in the Queen's English.\r\nColour has a 'u'. It is a programme, not a program.\r\nTea is measured in cups, not fluid ounces.\r\nWe regret nothing."
+    1022  "About \xc6ldreC2"
+
+    /* Joshua */
+    1100  "Joshua  \xc6ldreC2"
+    1101  "Server Log / Console"
+    1102  "&File"
+    1103  "&Tank"
+    1104  "&Window"
+    1105  "&New Session\tCtrl+N"
+    1106  "&Disconnect"
+    1107  "E&xit"
+    1108  "&Sysinfo"
+    1109  "&Process List"
+    1110  "&Directory Listing..."
+    1111  "&Get File..."
+    1112  "&Put File..."
+    1113  "&Screenshot"
+    1114  "&Registry Query..."
+    1115  "Tile &Horizontal"
+    1116  "Tile &Vertical"
+    1117  "&Cascade"
+    1118  "Close &All"
+    1119  "Joshua  \xc6ldreC2  \x97  Startup"
+    1120  "Listen port:"
+    1121  "Server key:"
+    1122  "Regenerate"
+    1123  "Start"
+    1124  ":%d [listening]"
+    1125  "[Tank connected: %s  OS %s]\r\n"
+    1126  " [ready]"
+    1127  " [busy]"
+    1128  " [disconnected]"
+    1129  "&Relay"
+    1130  "&Port Forward..."
+    1131  "&SOCKS4 Proxy..."
+    1132  "Stop &Relay"
+
+    /* Grid */
+    1200  "Grid \x97 Port Scanner"
+    1201  "Target:"
+    1202  "Ports:"
+    1203  "Timeout:"
+    1204  "Pool:"
+    1205  "Banner grab"
+    1206  "Scan"
+    1207  "&View"
+    1208  "&Default"
+    1209  "Solarized &Dark"
+    1210  "Solarized &Light"
+    1211  "&Terminal"
+    1212  "  Ready."
+    1213  "  Done.  %d / %d  open: %d"
+
+    /* Lightman */
+    1300  "Lightman  \xc6ldreC2"
+    1301  "Lightman  \xc6ldreC2"
+    1302  "Enter your handle (nom-de-plume):"
+    1303  "Connect"
+    1304  "Usage: lightman.exe <host> <port> <key>\r\n\r\nExample: lightman.exe 10.0.0.1 4444 A3F7B291"
+    1305  "Lightman  \xc6ldreC2  [disconnected]"
+
+    /* Flynn */
+    1350  "Flynn  \xc6ldreC2"
+    1351  "Flynn  \xc6ldreC2  \x97  Connect"
+    1352  "Joshua host:"
+    1353  "Port:"
+    1354  "Server key:"
+    1355  "Your handle:"
+    1356  "Connect"
+    1357  "Flynn  \xc6ldreC2  [disconnected]"
+
+    /* CLU */
+    1400  "CLU  \xc6ldreC2 Implant Generator"
+    1401  "Template:"
+    1402  "Output:"
+    1403  "Host:"
+    1404  "Port:"
+    1405  "TLS"
+    1406  "Generate"
+
+    /* markuped */
+    1450  "markuped \x97 Markdown Editor"
+    1451  "markuped"
+    1452  "markuped  \x97  Markdown Editor\r\nWin32s / Win32 compatible\r\n\r\nSupports: headers, bold, italic, inline code,\r\nfenced code blocks, blockquotes, lists (-, *, +),\r\ntask checkboxes (- [ ] / - [x]), HR, links.\r\n\r\n\xc6ldreC2 toolkit"
+    1453  "&File"
+    1454  "&Edit"
+    1455  "F&ormat"
+    1456  "&View"
+    1457  "&Bold\tCtrl+B"
+    1458  "&Italic\tCtrl+I"
+    1459  "Inline &Code"
+    1460  "Heading &1"
+    1461  "Heading &2"
+    1462  "Heading &3"
+    1463  "&Blockquote"
+    1464  "&List Item"
+    1465  "Horizontal &Rule"
+    1466  "Toggle &Preview\tCtrl+P"
+
+    /* wget */
+    1500  "wget \x97 Downloading"
+    1501  "wget  \x97  Download File"
+    1502  "URL:"
+    1503  "Save as (optional):"
+    1504  "Download"
+    1505  "Connecting..."
+    1506  "Done: %ld bytes"
+
+    /* ncnt */
+    1550  "Usage: ncnt [-l -p <port>] [<host> <port>] [-e <cmd>] [-v]\r\n  -l -p <port>   listen mode\r\n  <host> <port>  connect mode\r\n  -e <cmd>       exec programme on connect\r\n  -v             verbose\r\nNetcat for Windows NT — inspired by Weld Pond (Chris Wysopal)"
+    1551  "Listening on port %d...\r\n"
+    1552  "Connected to %s:%d\r\n"
+    1553  "Connection closed.\r\n"
+
+    /* svcany */
+    1600  "Usage: svcany <verb> [args]\r\n  install <name> <display> <path> [auto|manual|disabled]\r\n  remove  <name>\r\n  start   <name>\r\n  stop    <name>\r\n  query   <name>\r\n  list"
+    1601  "Service '%s' installed.\r\n"
+    1602  "Service '%s' removed.\r\n"
+    1603  "Service '%s' started.\r\n"
+    1604  "Service '%s' stopped.\r\n"
+    1605  "Error: Service Control Manager not available on this platform.\r\n"
+
+    /* regcli */
+    1650  "Usage: regcli <verb> <key> [/v <name>] [/t <type>] [/d <data>] [<file>]\r\n  query  HKLM\\Key [/v Name]      enumerate or read a value\r\n  set    HKLM\\Key /v Name /t REG_SZ /d data\r\n  delete HKLM\\Key [/v Name]      delete value or key\r\n  export HKLM\\Key out.reg\r\n  import input.reg"
+    1651  "Key or value not found.\r\n"
+    1652  "Operation successful.\r\n"
+    1653  "Windows Registry Editor Version 5.00\r\n\r\n"
+
+    /* Utility tools */
+    1700  "Usage: whoami [-v]\r\n  -v   verbose (groups + privileges)"
+    1710  "Usage: arp [-a] [-s <subnet/cidr>] [-t ms]\r\n  -a           show ARP table\r\n  -s <net>     ping-sweep then show ARP\r\n  -t ms        ping timeout (default 200)"
+    1720  "Usage: stager <file> [-p <port>] [-n <count>] [-q]\r\n  -p <port>    listen port (default random)\r\n  -n <count>   serve N times then exit (default 1)\r\n  -q           quiet"
+    1721  "Serving '%s' on port %d  (will serve %d time(s))\r\n"
+    1722  "Served to %s  (%ld bytes)\r\n"
+    1730  "Usage: clip <verb> [args]\r\n  read          print clipboard text to stdout\r\n  write <text>  set clipboard text\r\n  set <file>    set clipboard from file\r\n  clear         empty clipboard"
+    1740  "Usage: timestamp <target> <source>           copy timestamps\r\n       timestamp <target> <date> <time>        set timestamps\r\n  date: YYYY-MM-DD   time: HH:MM:SS"
+END

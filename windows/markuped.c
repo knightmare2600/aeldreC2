@@ -125,6 +125,7 @@ typedef struct {
     int   is_rule;
     int   is_codeblk;
     int   is_task;     /* 1=unchecked [ ], 2=checked [x] */
+    int   src_line;    /* 0-based source line index for checkbox toggle */
     int   nruns;
     InlineRun runs[16];
     HFONT font;
@@ -317,6 +318,7 @@ static void md_parse(const char *src)
     const char *p = src;
     int  in_code_block = 0;
     int  ni = 0;
+    int  src_line_no = 0;
 
     g_nplines = 0;
 
@@ -343,6 +345,7 @@ static void md_parse(const char *src)
         }
 
         memset(pl, 0, sizeof(*pl));
+        pl->src_line = src_line_no++;  /* record before processing continues */
 
         /* fenced code block toggle */
         if (strncmp(line, "```", 3) == 0) {
@@ -676,6 +679,54 @@ static LRESULT CALLBACK PreviewWndProc(HWND hwnd, UINT msg,
         return 0;
     }
 
+    case WM_LBUTTONDOWN: {
+        int click_x = (int)(short)LOWORD(lp);
+        int click_y = (int)(short)HIWORD(lp);
+        int ty = 8 - g_prev_scroll;
+        int j;
+        for (j = 0; j < g_nplines; j++) {
+            PreviewLine *pl2 = &g_plines[j];
+            int bot = ty + pl2->line_h;
+            if (click_y >= ty && click_y < bot && pl2->is_task) {
+                /* Accept click anywhere on the checkbox square + a few pixels margin */
+                if (click_x >= 5 && click_x <= 26) {
+                    int tlen = GetWindowTextLength(g_hwnd_edit);
+                    char *tbuf = (char *)GlobalAlloc(GPTR, tlen + 2);
+                    if (tbuf) {
+                        char *lineptr;
+                        int k;
+                        GetWindowText(g_hwnd_edit, tbuf, tlen + 1);
+                        lineptr = tbuf;
+                        for (k = 0; k < pl2->src_line; k++) {
+                            char *nlp = strchr(lineptr, '\n');
+                            if (!nlp) { lineptr = NULL; break; }
+                            lineptr = nlp + 1;
+                        }
+                        if (lineptr) {
+                            char *eol = strchr(lineptr, '\n');
+                            char *cb  = strstr(lineptr, "[ ]");
+                            char *cx  = strstr(lineptr, "[x]");
+                            if (!cx) cx = strstr(lineptr, "[X]");
+                            if (cb && (!eol || cb < eol)) {
+                                cb[1] = 'x';
+                                SetWindowText(g_hwnd_edit, tbuf);
+                                preview_refresh(0);
+                            } else if (cx && (!eol || cx < eol)) {
+                                cx[1] = ' ';
+                                SetWindowText(g_hwnd_edit, tbuf);
+                                preview_refresh(0);
+                            }
+                        }
+                        GlobalFree((HGLOBAL)tbuf);
+                    }
+                }
+                break;
+            }
+            ty = bot;
+        }
+        return 0;
+    }
+
     case WM_ERASEBKGND:
         return 1;
 
@@ -739,6 +790,7 @@ static void preview_refresh(int reset_scroll)
             }
         }
         InvalidateRect(g_hwnd_prev, NULL, TRUE);
+        UpdateWindow(g_hwnd_prev);
     }
 }
 
@@ -853,6 +905,7 @@ static void editor_insert(const char *prefix, const char *suffix)
         GlobalFree((HGLOBAL)all);
     }
     g_dirty = TRUE;
+    if (g_show_prev) preview_refresh(0);
     SetFocus(g_hwnd_edit);
 }
 
@@ -885,6 +938,7 @@ static void editor_prefix_line(const char *prefix)
     }
     GlobalFree((HGLOBAL)all);
     g_dirty = TRUE;
+    if (g_show_prev) preview_refresh(0);
     SetFocus(g_hwnd_edit);
     (void)llen;
 }
@@ -1123,9 +1177,9 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg,
 
     case WM_CREATE:
         g_hwnd_edit = CreateWindowEx(
-            WS_EX_CLIENTEDGE,
+            0,
             "EDIT", "",
-            WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL |
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | WS_BORDER |
             ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_WANTRETURN,
             0, TOOLBAR_H, 300, 400, hwnd,
             (HMENU)IDC_EDITOR, g_hinst, NULL);
@@ -1338,9 +1392,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
     RegisterClass(&wc);
 
     g_hwnd_frame = CreateWindow(APP_NAME, APP_TITLE,
-        WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT,
-        900, 600,
+        900, 700,
         NULL, NULL, hInst, NULL);
 
     if (!g_hwnd_frame) return 1;

@@ -423,14 +423,14 @@ OBJ_ROOTSHARED = &
 # Default target
 # =================================================================
 
-all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe setup16.exe .SYMBOLIC
+all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe ncnt.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe yori16.exe yori32.exe yoriview.exe setup16.exe .SYMBOLIC
 
-win32s: pageant.exe putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe ipcalc16.exe clu.exe grid.exe ipcalc32.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe setup16.exe setup32.exe .SYMBOLIC
+win32s: pageant.exe putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe ipcalc16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe setup16.exe setup32.exe .SYMBOLIC
 
 dist: win32s .SYMBOLIC
 	sh -c "mkdir -p ../output/compiled ../output/exe"
 	python3 ../tools/mksetup.py --out16 output/exe/setup16.exe --out32 output/exe/setup32.exe
-	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
+	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe yori16.exe yori32.exe yoriview.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
 
 # =================================================================
 # be_list.c — per-target compilation with different defines
@@ -799,6 +799,13 @@ grid.res: grid.rc grid.ico
 grid.exe: grid.obj grid.res
 	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) grid.obj wsock32.lib comdlg32.lib
 	wrc grid.res $@
+
+# gridcli.exe -- console-subsystem port scanner for command.com
+gridcli.obj: gridcli.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c gridcli.c
+
+gridcli.exe: gridcli.obj
+	$(CC) -bt=nt -l=nt -fe=$@ $(LDFLAGS) gridcli.obj wsock32.lib
 
 # =================================================================
 # ipcalc32.exe -- Win32s/Win32 IP subnet calculator (GUI, no sockets)
@@ -1720,5 +1727,171 @@ wu_win_strerror.obj: utils/win_strerror.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c $<
 wu_wmemchr.obj: utils/wmemchr.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c $<
+
+# =================================================================
+# AeldreC2 NT toolkit tools (console subsystem, advapi32/wsock32)
+# =================================================================
+
+CTOOL_CC = $(CC) -bt=nt -l=nt -za99 -ox -D_WIN32
+
+# ncnt.exe -- Weld Pond-tribute netcat for NT
+ncnt.obj: ncnt.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c ncnt.c
+
+ncnt.exe: ncnt.obj
+	$(CTOOL_CC) -fe=$@ ncnt.obj wsock32.lib
+
+# svcany.exe -- NT service installer
+svcany.obj: svcany.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c svcany.c
+
+svcany.exe: svcany.obj
+	$(CTOOL_CC) -fe=$@ svcany.obj advapi32.lib
+
+# regcli.exe -- CLI registry tool for NT 3.x/4.x
+regcli.obj: regcli.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c regcli.c
+
+regcli.exe: regcli.obj
+	$(CTOOL_CC) -fe=$@ regcli.obj advapi32.lib
+
+# whoami.exe -- whoami for NT 3.x (missing before XP)
+whoami.obj: whoami.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c whoami.c
+
+whoami.exe: whoami.obj
+	$(CTOOL_CC) -fe=$@ whoami.obj advapi32.lib netapi32.lib
+
+# arp.exe -- ARP table viewer + ping sweep
+arp.obj: arp.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c arp.c
+
+arp.exe: arp.obj
+	$(CTOOL_CC) -fe=$@ arp.obj wsock32.lib
+
+# stager.exe -- tiny HTTP file staging server
+stager.obj: stager.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c stager.c
+
+stager.exe: stager.obj
+	$(CTOOL_CC) -fe=$@ stager.obj wsock32.lib
+
+# clip.exe -- clipboard read/write from command line
+clip.obj: clip.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c clip.c
+
+clip.exe: clip.obj
+	$(CTOOL_CC) -fe=$@ clip.obj user32.lib
+
+# timestmp.exe -- file timestamp manipulation (8.3: timestmp)
+timestmp.obj: timestmp.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c timestmp.c
+
+timestmp.res: timestmp.rc timestmp.ico
+	$(RCPATH) $(RCFLAGS) timestmp.rc -o timestmp.res
+
+timestmp.exe: timestmp.obj timestmp.res
+	$(CTOOL_CC) -fe=$@ timestmp.obj
+	wrc timestmp.res $@
+
+# --- add icons to console NT tools that have .rc files ---
+
+ncnt.res: ncnt.rc ncnt.ico
+	$(RCPATH) $(RCFLAGS) ncnt.rc -o ncnt.res
+
+ncnt.exe: ncnt.obj ncnt.res
+	$(CTOOL_CC) -fe=$@ ncnt.obj wsock32.lib
+	wrc ncnt.res $@
+
+svcany.res: svcany.rc svcany.ico
+	$(RCPATH) $(RCFLAGS) svcany.rc -o svcany.res
+
+svcany.exe: svcany.obj svcany.res
+	$(CTOOL_CC) -fe=$@ svcany.obj advapi32.lib
+	wrc svcany.res $@
+
+regcli.res: regcli.rc regcli.ico
+	$(RCPATH) $(RCFLAGS) regcli.rc -o regcli.res
+
+regcli.exe: regcli.obj regcli.res
+	$(CTOOL_CC) -fe=$@ regcli.obj advapi32.lib
+	wrc regcli.res $@
+
+whoami.res: whoami.rc whoami.ico
+	$(RCPATH) $(RCFLAGS) whoami.rc -o whoami.res
+
+whoami.exe: whoami.obj whoami.res
+	$(CTOOL_CC) -fe=$@ whoami.obj advapi32.lib netapi32.lib
+	wrc whoami.res $@
+
+arp.res: arp.rc arp.ico
+	$(RCPATH) $(RCFLAGS) arp.rc -o arp.res
+
+arp.exe: arp.obj arp.res
+	$(CTOOL_CC) -fe=$@ arp.obj wsock32.lib
+	wrc arp.res $@
+
+stager.res: stager.rc stager.ico
+	$(RCPATH) $(RCFLAGS) stager.rc -o stager.res
+
+stager.exe: stager.obj stager.res
+	$(CTOOL_CC) -fe=$@ stager.obj wsock32.lib
+	wrc stager.res $@
+
+clip.res: clip.rc clip.ico
+	$(RCPATH) $(RCFLAGS) clip.rc -o clip.res
+
+clip.exe: clip.obj clip.res
+	$(CTOOL_CC) -fe=$@ clip.obj user32.lib
+	wrc clip.res $@
+
+gridcli.res: gridcli.rc gridcli.ico
+	$(RCPATH) $(RCFLAGS) gridcli.rc -o gridcli.res
+
+gridcli.exe: gridcli.obj gridcli.res
+	$(CC) -bt=nt -l=nt -fe=$@ $(LDFLAGS) gridcli.obj wsock32.lib
+	wrc gridcli.res $@
+
+# Convenience target: build all NT tools at once
+nt-tools: ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe .SYMBOLIC
+
+# =================================================================
+# Yori: remote screen viewer / control
+# yori16.exe -- Win16 server (WFW 3.11, Win 3.11 — no Win32s needed)
+# yori32.exe -- Win32s/Win95/NT server  (both share yori.ico = Malcolm McDowell/Alex)
+# yoriview.exe -- Win32 operator viewer (codename: the_universal)
+# =================================================================
+
+yori.res: yori.rc yori.ico
+	$(RCPATH) $(RCFLAGS) yori.rc -o yori.res
+
+yori16.obj: yori_srv.c
+	wcc -ml -bt=windows -zu -s -DYORI_WIN16 -I/opt/watcom/h/win -fo=$@ yori_srv.c
+
+yori16.res: yori.rc yori.ico
+	wrc -q -bt=windows -r -fo=$@ yori.rc
+
+yori16.exe: yori16.obj yori16.res
+	wlink system windows name yori16.exe file yori16.obj library winsock.lib
+	wrc yori16.res $@
+
+yori32.obj: yori_srv.c
+	$(CC) $(COMPAT) $(CFLAGS) -DYORI_WIN32 -fo=$@ -c yori_srv.c
+
+yori32.exe: yori32.obj yori.res
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) yori32.obj wsock32.lib
+	wrc yori.res $@
+
+yoriview.obj: yoriview.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c yoriview.c
+
+yoriview.res: yoriview.rc yoriview.ico
+	$(RCPATH) $(RCFLAGS) yoriview.rc -o yoriview.res
+
+yoriview.exe: yoriview.obj yoriview.res
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) yoriview.obj wsock32.lib user32.lib
+	wrc yoriview.res $@
+
+yori: yori16.exe yori32.exe yoriview.exe .SYMBOLIC
 
 # end of Makefile.wc

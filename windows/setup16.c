@@ -790,6 +790,36 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev,
     g_hwnd_main = CreateWindow("Setup16Stub", "",
         WS_OVERLAPPED, 0, 0, 0, 0, NULL, NULL, hInst, NULL);
 
+    /* Win32s probe: warn if Win32s tools are being installed but Win32s is absent.
+     * We check for WIN32S.INI in WINDOWS\SYSTEM, which Win32s always creates.
+     * Win16-only tools (tank16, wget16, etc.) still install fine without Win32s. */
+    {
+        char sysdir[MAX_PATH], probe[MAX_PATH];
+        BOOL has_win32s = FALSE;
+        GetSystemDirectory(sysdir, MAX_PATH);
+        /* GetSystemDirectory on WFW returns the 16-bit system dir (e.g. C:\WINDOWS\SYSTEM) */
+        wsprintf(probe, "%s\\WIN32S.INI", sysdir);
+        has_win32s = (GetFileAttributes(probe) != (DWORD)0xFFFF);
+        if (!has_win32s) {
+            wsprintf(probe, "%s\\W32SYS.DLL", sysdir);
+            has_win32s = (GetFileAttributes(probe) != (DWORD)0xFFFF);
+        }
+        if (!has_win32s) {
+            int r = MessageBox(NULL,
+                "Win32s does not appear to be installed on this system.\n\n"
+                "Most AeldreC2 tools are Win32 programs and require Win32s to run\n"
+                "on Windows 3.11 / WFW without it.\n\n"
+                "Win16 tools (tank16, wget16, ipcalc16, setup) will still work.\n\n"
+                "To install Win32s, you will need:\n"
+                "  pw1232.exe  --  Win32s 1.30c redistributable\n"
+                "  Available from: ftp.microsoft.com or winworldpc.com\n\n"
+                "Continue installation anyway?",
+                "AeldreC2 Setup  \x97  Win32s Not Found",
+                MB_YESNO | MB_ICONWARNING);
+            if (r == IDNO) return 0;
+        }
+    }
+
     /* Check bundle is present */
     if (!load_bundle()) {
         MessageBox(NULL,

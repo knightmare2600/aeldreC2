@@ -73,6 +73,36 @@
 #define BBAR_H   26
 #define CTRL_H   20
 
+/* View menu — theme IDs */
+#define IDM_THEME_DEFAULT  501
+#define IDM_THEME_SOL_DARK 502
+#define IDM_THEME_SOL_LITE 503
+#define IDM_THEME_TERMINAL 504
+
+/* Colour theme */
+typedef struct {
+    COLORREF bg;       /* list background */
+    COLORREF fg;       /* normal text */
+    COLORREF fg_open;  /* "open" port highlight */
+    COLORREF sel_bg;   /* selected-item background */
+} GridTheme;
+
+static const GridTheme k_themes[] = {
+    /* Default */
+    { (COLORREF)-1, (COLORREF)-1, RGB(0,128,0),   (COLORREF)-1 },
+    /* Solarized Dark */
+    { RGB(0,43,54),     RGB(131,148,150), RGB(133,153,0),  RGB(7,54,66)  },
+    /* Solarized Light */
+    { RGB(253,246,227), RGB(101,123,131), RGB(133,153,0),  RGB(238,232,213) },
+    /* Terminal */
+    { RGB(0,0,0),       RGB(0,200,0),     RGB(0,255,0),    RGB(0,40,0)   },
+};
+#define N_THEMES 4
+
+static int g_theme = 0;   /* 0 = default system colours */
+
+#define LIST_ITEM_H 16    /* row height for owner-draw */
+
 /* ------------------------------------------------------------------ */
 /* Service table                                                       */
 /* ------------------------------------------------------------------ */
@@ -743,10 +773,10 @@ static LRESULT CALLBACK GridWndProc(HWND hwnd, UINT msg,
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_DISABLED,
             478, 28, 154, 24, hwnd, (HMENU)IDC_STOPBTN, g_hinst, NULL);
 
-        /* ---- Results list box ---- */
+        /* ---- Results list box (owner-draw for theme support) ---- */
         g_hwnd_list = CreateWindow("LISTBOX", NULL,
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | WS_BORDER |
-            LBS_NOINTEGRALHEIGHT | LBS_NOSEL,
+            LBS_NOINTEGRALHEIGHT | LBS_NOSEL | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
             0, PANEL_H, 100, 100,
             hwnd, (HMENU)IDC_LIST, g_hinst, NULL);
         SendMessage(g_hwnd_list, WM_SETFONT,
@@ -766,6 +796,16 @@ static LRESULT CALLBACK GridWndProc(HWND hwnd, UINT msg,
         g_hwnd_close = CreateWindow("BUTTON", "Close",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             0, 0, 88, 22, hwnd, (HMENU)IDC_CLOSE_BTN, g_hinst, NULL);
+        {
+            HMENU mb = CreateMenu();
+            HMENU mv = CreatePopupMenu();
+            AppendMenu(mv, MF_STRING | (g_theme==0?MF_CHECKED:0), IDM_THEME_DEFAULT,  "&Default");
+            AppendMenu(mv, MF_STRING | (g_theme==1?MF_CHECKED:0), IDM_THEME_SOL_DARK, "Solarized &Dark");
+            AppendMenu(mv, MF_STRING | (g_theme==2?MF_CHECKED:0), IDM_THEME_SOL_LITE, "Solarized &Light");
+            AppendMenu(mv, MF_STRING | (g_theme==3?MF_CHECKED:0), IDM_THEME_TERMINAL, "&Terminal");
+            AppendMenu(mb, MF_POPUP, (UINT_PTR)mv, "&View");
+            SetMenu(hwnd, mb);
+        }
         return 0;
 
     case WM_SIZE: {
@@ -807,6 +847,47 @@ static LRESULT CALLBACK GridWndProc(HWND hwnd, UINT msg,
         return 0;
     }
 
+    case WM_MEASUREITEM: {
+        MEASUREITEMSTRUCT *mis = (MEASUREITEMSTRUCT *)lp;
+        if (mis->CtlID == IDC_LIST)
+            mis->itemHeight = LIST_ITEM_H;
+        return TRUE;
+    }
+
+    case WM_DRAWITEM: {
+        DRAWITEMSTRUCT *dis = (DRAWITEMSTRUCT *)lp;
+        if (dis->CtlID == IDC_LIST && dis->itemID != (UINT)-1) {
+            char text[512];
+            COLORREF bg, fg;
+            int is_open;
+
+            text[0] = '\0';
+            SendMessage(g_hwnd_list, LB_GETTEXT, dis->itemID, (LPARAM)text);
+
+            is_open = (strstr(text, "\topen\t") != NULL);
+
+            if (g_theme == 0) {
+                /* Default: system colours, highlight opens in green */
+                bg = GetSysColor((dis->itemState & ODS_SELECTED)
+                                 ? COLOR_HIGHLIGHT : COLOR_WINDOW);
+                fg = is_open ? k_themes[0].fg_open
+                             : GetSysColor(COLOR_WINDOWTEXT);
+            } else {
+                const GridTheme *t = &k_themes[g_theme];
+                bg = (dis->itemState & ODS_SELECTED) ? t->sel_bg : t->bg;
+                fg = is_open ? t->fg_open : t->fg;
+            }
+
+            SetBkColor(dis->hDC, bg);
+            SetTextColor(dis->hDC, fg);
+            SelectObject(dis->hDC, GetStockObject(ANSI_FIXED_FONT));
+            ExtTextOut(dis->hDC, dis->rcItem.left + 2, dis->rcItem.top + 1,
+                       ETO_OPAQUE | ETO_CLIPPED, &dis->rcItem,
+                       text, lstrlen(text), NULL);
+        }
+        return TRUE;
+    }
+
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDC_SCAN:
@@ -824,6 +905,28 @@ static LRESULT CALLBACK GridWndProc(HWND hwnd, UINT msg,
         case IDC_CLOSE_BTN:
             DestroyWindow(hwnd);
             break;
+        case IDM_THEME_DEFAULT:
+        case IDM_THEME_SOL_DARK:
+        case IDM_THEME_SOL_LITE:
+        case IDM_THEME_TERMINAL: {
+            HMENU mb = GetMenu(hwnd);
+            HMENU mv = GetSubMenu(mb, 0);
+            int new_theme = LOWORD(wp) - IDM_THEME_DEFAULT;
+            int j;
+            g_theme = new_theme;
+            for (j = 0; j < N_THEMES; j++)
+                CheckMenuItem(mv, IDM_THEME_DEFAULT + j,
+                              MF_BYCOMMAND | (j == g_theme ? MF_CHECKED : MF_UNCHECKED));
+            if (g_theme > 0 && g_hwnd_list) {
+                /* Force listbox background repaint */
+                const GridTheme *t = &k_themes[g_theme];
+                SendMessage(g_hwnd_list, LB_SETCARETINDEX, 0, FALSE);
+                InvalidateRect(g_hwnd_list, NULL, TRUE);
+            } else if (g_hwnd_list) {
+                InvalidateRect(g_hwnd_list, NULL, TRUE);
+            }
+            break;
+        }
         }
         return 0;
 
@@ -985,7 +1088,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
         g_hwnd_frame = CreateWindow(
             WC_GRID, "Grid \x97 Port Scanner",
             WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-            CW_USEDEFAULT, CW_USEDEFAULT, 660, 460,
+            CW_USEDEFAULT, CW_USEDEFAULT, 660, 560,
             NULL, NULL, g_hinst, NULL);
 
         if (!g_hwnd_frame) {

@@ -292,6 +292,35 @@ static LRESULT CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
 
+    case WM_SIZE: {
+        int cw = (int)LOWORD(lp);
+        /* Stretch Template and Output path edits; anchor Browse buttons right */
+        if (GetDlgItem(hwnd, IDC_EDT_TMPL))
+            MoveWindow(GetDlgItem(hwnd, IDC_EDT_TMPL), 82, 12, cw - 82 - 84, 22, TRUE);
+        if (GetDlgItem(hwnd, IDC_BTN_TMPL))
+            MoveWindow(GetDlgItem(hwnd, IDC_BTN_TMPL), cw - 78, 12, 76, 22, TRUE);
+        if (GetDlgItem(hwnd, IDC_EDT_OUT))
+            MoveWindow(GetDlgItem(hwnd, IDC_EDT_OUT),  82, 42, cw - 82 - 84, 22, TRUE);
+        if (GetDlgItem(hwnd, IDC_BTN_OUT))
+            MoveWindow(GetDlgItem(hwnd, IDC_BTN_OUT),  cw - 78, 42, 76, 22, TRUE);
+        /* Centre Generate / Exit buttons */
+        {
+            int mid = cw / 2;
+            if (GetDlgItem(hwnd, IDC_BTN_GEN))
+                MoveWindow(GetDlgItem(hwnd, IDC_BTN_GEN),  mid - 120, 112, 110, 28, TRUE);
+            if (GetDlgItem(hwnd, IDC_BTN_EXIT))
+                MoveWindow(GetDlgItem(hwnd, IDC_BTN_EXIT), mid + 14,  112, 110, 28, TRUE);
+        }
+        return 0;
+    }
+
+    case WM_GETMINMAXINFO: {
+        MINMAXINFO *mm = (MINMAXINFO *)lp;
+        mm->ptMinTrackSize.x = 502;
+        mm->ptMinTrackSize.y = 162;
+        return 0;
+    }
+
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
@@ -324,12 +353,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
     }
 
     hwnd = CreateWindowEx(
-        WS_EX_DLGMODALFRAME,
+        0,
         "CluMain",
         "CLU  \xe6ldreC2 Implant Generator",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_THICKFRAME,
         CW_USEDEFAULT, CW_USEDEFAULT,
-        502, 162,
+        660, 200,
         NULL, NULL, hInst, NULL);
 
     if (!hwnd) return 1;

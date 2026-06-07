@@ -289,7 +289,19 @@ All binaries are built to `windows/`. Build all at once with `./build-c2.sh`, or
 | `lightman.exe` | Win32s / NT / 95 | CLI operator client (connects to Joshua) |
 | `flynn.exe` | Win32s / NT / 95 | GUI operator client (connects to Joshua) |
 | `ncwfw.exe` | Win32s / NT / 95 | Netcat-style TCP relay |
-| `grid.exe` | Win32s / NT / 95 | TCP port scanner |
+| `grid.exe` | Win32s / NT / 95 | TCP port scanner (GUI / auto-detect) |
+| `gridcli.exe` | Win32 / NT / 95 | TCP port scanner (pure console, for command.com) |
+| `ncnt.exe` | Win32 / NT 3.1+ | Netcat for NT — inspired by Weld Pond (L0pht, ~1998) |
+| `svcany.exe` | Win32 / NT 3.1+ | Install/remove/start/stop any executable as an NT service |
+| `regcli.exe` | Win32 / NT 3.1+ | CLI registry tool for NT 3.x/4.x (fills gap before reg.exe) |
+| `whoami.exe` | Win32 / NT 3.1+ | whoami for NT 3.x (username, domain, SID, groups, privs) |
+| `arp.exe` | Win32 / NT 4+ | ARP table viewer + ICMP ping sweep |
+| `stager.exe` | Win32 / NT 3.1+ | Tiny HTTP file server — serve a file once then exit |
+| `clip.exe` | Win32 / NT 3.1+ | Clipboard read/write from command line |
+| `timestmp.exe` | Win32 / NT 3.1+ | File timestamp copy and set — 8.3: timestmp (authorised forensic testing) |
+| `yori16.exe` | Win 3.1 / WFW 3.11 | Remote screen/control server — Win16 (no Win32s needed) |
+| `yori32.exe` | Win32s / Win95 / NT 3.1+ | Remote screen/control server — Win32 |
+| `yoriview.exe` | Win32 / NT 4+ | Remote screen viewer — operator side (codename: THE_UNIVERSAL) |
 | `ipcalc32.exe` | Win32s / NT / 95 | Subnet calculator |
 | `ipcalc16.exe` | Win 3.1 / WFW 3.11 | Subnet calculator (16-bit) |
 | `markuped.exe` | Win32s / NT / 95 | Markdown editor (split-pane, live preview) |
@@ -645,19 +657,71 @@ nmap data files are GPL-licensed. See https://nmap.org/book/man-legal.html
 
 ### Icons
 
-All icons (32×32 + 16×16, 4bpp Windows VGA palette) generated from source images in `icons/` using `icons/win16ico.py` (Python 3 + Pillow).
+All icons are 32×32 + 16×16, 4bpp Windows VGA palette, generated from `icons/` via `icons/win16ico.py` (Python 3 + Pillow).
 
-| File | Source | Used by |
-|------|--------|---------|
-| `windows/joshua.ico` | `icons/joshua.png` (jukebox) | joshua.exe |
-| `windows/ncwfw.ico` | `icons/WOPR.jpg` | ncwfw.exe |
-| `windows/tank.ico` | `icons/TANK.webp` | tank.exe, tank16.exe |
-| `windows/lightcycle.ico` | `icons/LIGHTCYCLE.PNG` | clu.exe |
-| `windows/reco.ico` | `icons/RECO.webp` | (available) |
-| `windows/grid.ico` | `icons/grid.png` | grid.exe |
-| `windows/ipcalc.ico` | `icons/ipcalc.png` | ipcalc32.exe, ipcalc16.exe |
-| `windows/markuped.ico` | `icons/markuped.png` | markuped.exe |
-| `windows/wget.ico` | `icons/wget.png` | wget.exe, wget16.exe |
+To regenerate after changing a source image:
+```sh
+python3 icons/win16ico.py icons/<name>.png windows/<name>.ico
+```
+
+---
+
+#### ÆldreC2 Icon Gallery
+
+| Icon | Tool · Description | Reason for Icon |
+|:----:|-------------------|-----------------|
+| <img src="icons/joshua.png" width="48" alt="joshua"> | **`joshua.exe`** — C2 controller (MDI, multi-session) | |
+| <img src="icons/TANK.webp" width="48" alt="tank"> | **`tank.exe`** · **`tank16.exe`** — Connect-back implant | |
+| <img src="icons/lightman.png" width="48" alt="lightman"> | **`lightman.exe`** — CLI operator client | |
+| <img src="icons/flynn.png" width="48" alt="flynn"> | **`flynn.exe`** — GUI operator client (two-pane) | |
+| <img src="icons/LIGHTCYCLE.PNG" width="48" alt="clu"> | **`clu.exe`** — Implant generator / binary patcher | |
+| <img src="icons/RECO.webp" width="48" alt="recognizer"> | **Recognizer module** — Anti-analysis stub | |
+| | | |
+| <img src="icons/grid.png" width="48" alt="grid"> | **`grid.exe`** — TCP port scanner (GUI, colour themes) | |
+| <img src="icons/gridcli.png" width="48" alt="gridcli"> | **`gridcli.exe`** — TCP port scanner (console, command.com) | |
+| <img src="icons/WOPR.jpg" width="48" alt="ncwfw"> | **`ncwfw.exe`** — Netcat for WFW (tabbed MDI, Win16) | |
+| <img src="icons/ncnt.png" width="48" alt="ncnt"> | **`ncnt.exe`** — Netcat for NT (console, Weld Pond tribute) | |
+| <img src="icons/arp.png" width="48" alt="arp"> | **`arp.exe`** — ARP table viewer + ICMP ping sweep | |
+| <img src="icons/stager.png" width="48" alt="stager"> | **`stager.exe`** — HTTP file staging server | |
+| | | |
+| <img src="icons/ipcalc.png" width="48" alt="ipcalc"> | **`ipcalc32.exe`** · **`ipcalc16.exe`** — Subnet calculator | |
+| <img src="icons/wget.png" width="48" alt="wget"> | **`wget.exe`** · **`wget16.exe`** — HTTP/HTTPS/FTP downloader | |
+| <img src="icons/markuped.png" width="48" alt="markuped"> | **`markuped.exe`** — Markdown editor (split-pane, live preview) | |
+| <img src="icons/svcany.png" width="48" alt="svcany"> | **`svcany.exe`** — NT service installer + autorun persistence | |
+| <img src="icons/regcli.png" width="48" alt="regcli"> | **`regcli.exe`** — CLI registry tool for NT 3.x / 4.0 | |
+| <img src="icons/whoami.png" width="48" alt="whoami"> | **`whoami.exe`** — Identity / SID / groups for pre-XP NT | |
+| <img src="icons/clip.png" width="48" alt="clip"> | **`clip.exe`** — Clipboard read / write from command line | |
+| <img src="icons/timestmp.png" width="48" alt="timestmp"> | **`timestmp.exe`** — File timestamp copy and set | |
+| | | |
+| <img src="icons/yori.png" width="48" alt="yori"> | **`yori16.exe`** · **`yori32.exe`** — Remote screen/control server | |
+| <img src="icons/yoriview.png" width="48" alt="yoriview"> | **`yoriview.exe`** — Remote screen viewer · codename **THE\_UNIVERSAL** | |
+
+---
+
+## Localisation
+
+All user-visible strings are in `windows/strings_<lang>.rc` files.  The runtime language is chosen at startup via `GetUserDefaultLangID()` with a fallback to British English.
+
+| File | Language | LANGID |
+|------|----------|--------|
+| `strings_en_gb.rc` | English (British) — default | 0x0809 |
+| `strings_en_us.rc` | English (United States) | 0x0409 |
+| `strings_da.rc` | Dansk | 0x0406 |
+| `strings_de.rc` | Deutsch | 0x0407 |
+
+To add a language: copy `strings_en_gb.rc`, translate all strings, add a block for the new LANGID in `lang_detect()` in `lang.h`.
+
+---
+
+## Win32s
+
+Win32s is required to run Win32 tools on Windows 3.11 / WFW 3.11.
+
+```sh
+./fetch-win32s.sh   # downloads pw1232.exe (Win32s 1.30c redistributable)
+```
+
+The setup installer (`setup16.exe`) probes for Win32s at startup and warns if absent.
 
 ---
 

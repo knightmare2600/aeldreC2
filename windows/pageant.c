@@ -847,6 +847,13 @@ static BOOL AddTrayIcon(HWND hwnd)
     NOTIFYICONDATA tnid;
     HICON hicon;
 
+#ifdef WIN32S_COMPAT
+    /* Win32s shell32.dll stubs Shell_NotifyIcon — skip it entirely.
+     * The window is shown minimised on the desktop instead. */
+    (void)tnid; (void)hicon;
+    return TRUE;
+#endif
+
 #ifdef NIM_SETVERSION
     tnid.uVersion = 0;
     res = Shell_NotifyIcon(NIM_SETVERSION, &tnid);
@@ -1379,6 +1386,15 @@ static LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT message,
       case WM_NETEVENT:
         winselgui_response(wParam, lParam);
         return 0;
+#ifdef WIN32S_COMPAT
+      case WM_SIZE:
+        /* On Win32s there is no tray icon; restoring the minimised
+         * window is the equivalent of a tray double-click — open the
+         * key list automatically so the user has something to see. */
+        if (wParam == SIZE_RESTORED)
+            create_keylist_window();
+        return 0;
+#endif
       case WM_DESTROY:
         quit_help(hwnd);
         PostQuitMessage(0);
@@ -1858,8 +1874,21 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
      */
     if (already_running) {
         if (!command && !nclkeys) {
+#ifdef WIN32S_COMPAT
+            /* No tray icon on Win32s — bring the existing window back
+             * into view so the user can interact with it. */
+            HWND existing = FindWindow(TRAYCLASSNAME, TRAYWINTITLE);
+            if (existing) {
+                ShowWindow(existing, SW_RESTORE);
+                SetForegroundWindow(existing);
+            } else {
+                MessageBox(NULL, "Pageant is already running", "Pageant Error",
+                           MB_ICONERROR | MB_OK);
+            }
+#else
             MessageBox(NULL, "Pageant is already running", "Pageant Error",
                        MB_ICONERROR | MB_OK);
+#endif
         }
         return 0;
     }
@@ -1897,11 +1926,34 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     /* Set the default menu item. */
     SetMenuDefaultItem(systray_menu, IDM_VIEWKEYS, false);
 
+#ifdef WIN32S_COMPAT
+    /* Win32s has no taskbar/systray — show as a minimised desktop window
+     * so the user can see and restore Pageant rather than it vanishing. */
+    ShowWindow(traywindow, SW_SHOWMINIMIZED);
+#else
     ShowWindow(traywindow, SW_HIDE);
+#endif
 
-    /* Open the visible key list window, if we've been asked to. */
-    if (show_keylist_on_startup)
-        create_keylist_window();
+    /* Add key-management items to the tray window's system (title-bar) menu
+     * so right-clicking the title bar works like the tray right-click. */
+    {
+        HMENU sm = GetSystemMenu(traywindow, FALSE);
+        if (sm) {
+            InsertMenu(sm, 0, MF_BYPOSITION | MF_SEPARATOR,    0,           NULL);
+            InsertMenu(sm, 0, MF_BYPOSITION | MF_STRING, IDM_CLOSE,       "E&xit Pageant");
+            InsertMenu(sm, 0, MF_BYPOSITION | MF_STRING, IDM_REMOVE_ALL,  "Remove All Keys");
+            InsertMenu(sm, 0, MF_BYPOSITION | MF_SEPARATOR,    0,           NULL);
+            InsertMenu(sm, 0, MF_BYPOSITION | MF_STRING, IDM_ADDKEY_ENCRYPTED, "Add Key (e&ncrypted)");
+            InsertMenu(sm, 0, MF_BYPOSITION | MF_STRING, IDM_ADDKEY,      "&Add Key...");
+            InsertMenu(sm, 0, MF_BYPOSITION | MF_STRING, IDM_VIEWKEYS,    "&View Keys");
+            InsertMenu(sm, 0, MF_BYPOSITION | MF_SEPARATOR,    0,           NULL);
+        }
+    }
+
+    /* Open the visible key list window on every startup so the user has
+     * immediate access to Add Key / Remove etc. without needing the tray. */
+    create_keylist_window();
+    (void)show_keylist_on_startup;
 
     /*
      * Main message loop.

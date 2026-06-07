@@ -1,0 +1,168 @@
+/*
+ * strings_da.rc  --  AeldreC2  --  Dansk  --  base offset 3000
+ *
+ * Nordisk software fortjener nordiske oversættelser.
+ * Sønderjyske og resten af Danmark er velkomne.
+ */
+
+STRINGTABLE
+BEGIN
+    /* Fælles */
+    3001  "OK"
+    3002  "Annuller"
+    3003  "Fejl"
+    3004  "Luk"
+    3005  "Gennemse..."
+    3006  "Gem"
+    3007  "Kopiér"
+    3008  "Ny"
+    3009  "Åbn"
+    3010  "Ja"
+    3011  "Nej"
+    3012  "Hjælp"
+    3013  "Om"
+    3014  "Afslut"
+    3015  "Forbind"
+    3016  "Afbryd"
+    3017  "Stop"
+    3018  "Generér"
+    3019  "Send"
+    3020  "Klar."
+    3021  "Dette program er skrevet på britisk engelsk.\r\nDansk oversættelse er venligst leveret af \xc6ldreC2.\r\nFejl og mangler i oversættelsen beklages.\r\nBut we do know what a smorrebrod is."
+    3022  "Om \xc6ldreC2"
+
+    /* Joshua */
+    3100  "Joshua  \xc6ldreC2"
+    3101  "Serverlog / Konsol"
+    3102  "&Filer"
+    3103  "&Tank"
+    3104  "&Vindue"
+    3105  "&Ny session\tCtrl+N"
+    3106  "&Afbryd"
+    3107  "A&fslut"
+    3108  "&Systeminformation"
+    3109  "&Procesliste"
+    3110  "&Mappeindhold..."
+    3111  "&Hent fil..."
+    3112  "&Send fil..."
+    3113  "&Skærmbillede"
+    3114  "&Registreringsforespørgsel..."
+    3115  "Flisevis &vandret"
+    3116  "Flisevis &lodret"
+    3117  "&Overlappende"
+    3118  "Luk &alle"
+    3119  "Joshua  \xc6ldreC2  \x97  Opstart"
+    3120  "Lytteport:"
+    3121  "Servernøgle:"
+    3122  "Regenerér"
+    3123  "Start"
+    3124  ":%d [lytter]"
+    3125  "[Tank forbundet: %s  OS %s]\r\n"
+    3126  " [klar]"
+    3127  " [optaget]"
+    3128  " [afbrudt]"
+    3129  "&Videresend"
+    3130  "&Portvideresendin..."
+    3131  "&SOCKS4-proxy..."
+    3132  "Stop &videresendelse"
+
+    /* Grid */
+    3200  "Grid \x97 Portscanner"
+    3201  "Mål:"
+    3202  "Porte:"
+    3203  "Timeout:"
+    3204  "Pool:"
+    3205  "Banner-hentning"
+    3206  "Scan"
+    3207  "&Vis"
+    3208  "&Standard"
+    3209  "Solarized &mørk"
+    3210  "Solarized &lys"
+    3211  "&Terminal"
+    3212  "  Klar."
+    3213  "  Færdig.  %d / %d  åbne: %d"
+
+    /* Lightman */
+    3300  "Lightman  \xc6ldreC2"
+    3301  "Lightman  \xc6ldreC2"
+    3302  "Indtast dit kaldenavn:"
+    3303  "Forbind"
+    3304  "Brug: lightman.exe <vært> <port> <nøgle>\r\n\r\nEksempel: lightman.exe 10.0.0.1 4444 A3F7B291"
+    3305  "Lightman  \xc6ldreC2  [afbrudt]"
+
+    /* Flynn */
+    3350  "Flynn  \xc6ldreC2"
+    3351  "Flynn  \xc6ldreC2  \x97  Forbind"
+    3352  "Joshua-vært:"
+    3353  "Port:"
+    3354  "Servernøgle:"
+    3355  "Dit kaldenavn:"
+    3356  "Forbind"
+    3357  "Flynn  \xc6ldreC2  [afbrudt]"
+
+    /* CLU */
+    3400  "CLU  \xc6ldreC2 Implantatgenerator"
+    3401  "Skabelon:"
+    3402  "Resultat:"
+    3403  "Vært:"
+    3404  "Port:"
+    3405  "TLS"
+    3406  "Generér"
+
+    /* markuped */
+    3450  "markuped \x97 Markdown-editor"
+    3451  "markuped"
+    3452  "markuped  \x97  Markdown-editor\r\nKompatibel med Win32s / Win32\r\n\r\nUnderstøtter: overskrifter, fed, kursiv, kode,\r\nkodeblokke, blokcitater, lister, opgaveafkrydsning,\r\nvandrette linjer, hyperlinks.\r\n\r\n\xc6ldreC2-værktøjssæt"
+    3453  "&Filer"
+    3454  "&Rediger"
+    3455  "&Format"
+    3456  "&Vis"
+    3457  "&Fed\tCtrl+B"
+    3458  "&Kursiv\tCtrl+I"
+    3459  "Inline-&kode"
+    3460  "Overskrift &1"
+    3461  "Overskrift &2"
+    3462  "Overskrift &3"
+    3463  "&Blokcitat"
+    3464  "&Listepunkt"
+    3465  "Vandret &linje"
+    3466  "Vis/skjul &eksempel\tCtrl+P"
+
+    /* wget */
+    3500  "wget \x97 Henter"
+    3501  "wget  \x97  Hent fil"
+    3502  "URL:"
+    3503  "Gem som (valgfrit):"
+    3504  "Hent"
+    3505  "Forbinder..."
+    3506  "Færdig: %ld byte"
+
+    /* ncnt */
+    3550  "Brug: ncnt [-l -p <port>] [<vært> <port>] [-e <kommando>] [-v]\r\n  -l -p <port>   lyttetilstand\r\n  <vært> <port>  forbindelsestilstand\r\n  -e <kmd>       kør program ved forbindelse\r\n  -v             udførlig\r\nNetcat til Windows NT \x97 inspireret af Weld Pond (Chris Wysopal)"
+    3551  "Lytter på port %d...\r\n"
+    3552  "Forbundet til %s:%d\r\n"
+    3553  "Forbindelse lukket.\r\n"
+
+    /* svcany */
+    3600  "Brug: svcany <handling> [argumenter]\r\n  install <navn> <visningsnavn> <sti> [auto|manual|disabled]\r\n  remove  <navn>\r\n  start   <navn>\r\n  stop    <navn>\r\n  query   <navn>\r\n  list"
+    3601  "Tjeneste '%s' installeret.\r\n"
+    3602  "Tjeneste '%s' fjernet.\r\n"
+    3603  "Tjeneste '%s' startet.\r\n"
+    3604  "Tjeneste '%s' stoppet.\r\n"
+    3605  "Fejl: Tjenestekontrolstyringen er ikke tilgængelig på denne platform.\r\n"
+
+    /* regcli */
+    3650  "Brug: regcli <handling> <nøgle> [/v <navn>] [/t <type>] [/d <data>] [<fil>]\r\n  query  HKLM\\Nøgle [/v Navn]\r\n  set    HKLM\\Nøgle /v Navn /t REG_SZ /d data\r\n  delete HKLM\\Nøgle [/v Navn]\r\n  export HKLM\\Nøgle ud.reg\r\n  import ind.reg"
+    3651  "Nøgle eller værdi ikke fundet.\r\n"
+    3652  "Handlingen lykkedes.\r\n"
+    3653  "Windows Registry Editor Version 5.00\r\n\r\n"
+
+    /* Hjælpeværktøjer */
+    3700  "Brug: whoami [-v]\r\n  -v   udførlig (grupper og rettigheder)"
+    3710  "Brug: arp [-a] [-s <subnet/cidr>] [-t ms]\r\n  -a           vis ARP-tabel\r\n  -s <net>     ping-sweep og vis ARP\r\n  -t ms        ping-timeout (standard 200)"
+    3720  "Brug: stager <fil> [-p <port>] [-n <antal>] [-q]\r\n  -p <port>    lytteport (standard tilfældig)\r\n  -n <antal>   server N gange, derefter afslut (standard 1)\r\n  -q           stille"
+    3721  "Serverer '%s' på port %d  (vil servere %d gang(e))\r\n"
+    3722  "Serveret til %s  (%ld byte)\r\n"
+    3730  "Brug: clip <handling> [argumenter]\r\n  read          udskriv udklipsholder til stdout\r\n  write <tekst> sæt udklipsholderens tekst\r\n  set <fil>     indlæs fil til udklipsholder\r\n  clear         tøm udklipsholder"
+    3740  "Brug: timestamp <mål> <kilde>              kopiér tidsstempler\r\n       timestamp <mål> <dato> <tid>          sæt tidsstempler\r\n  dato: ÅÅÅÅ-MM-DD   tid: TT:MM:SS"
+END

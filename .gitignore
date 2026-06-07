@@ -114,6 +114,10 @@ Makefile
 /windows/*.ilk
 /windows/*.res
 /windows/*.RES
+/windows/*.err
+/windows/*.dll
+/output/compiled/
+/output/exe/
 /windows/*.pch
 /windows/*.rsp
 /windows/*.obj

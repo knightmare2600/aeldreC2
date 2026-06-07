@@ -43,6 +43,9 @@
 
 #define WM_LM_RECV    (WM_APP + 1)  /* socket data ready (WPARAM=sock) */
 #define WM_LM_DNS     (WM_APP + 2)  /* DNS result */
+#define WM_LM_CONTIM  (WM_APP + 3)  /* console-poll timer ID */
+
+#define CON_POLL_MS   50            /* stdin poll interval in console mode */
 
 #define INPUT_H       26
 #define BTN_W         60
@@ -67,6 +70,13 @@ static HINSTANCE g_hinst    = NULL;
 static HWND      g_hwnd     = NULL;
 static HWND      g_out      = NULL;
 static HWND      g_in       = NULL;
+
+/* Console mode */
+static int       g_con_mode = 0;
+static HANDLE    g_con_out  = INVALID_HANDLE_VALUE;
+static HANDLE    g_con_in   = INVALID_HANDLE_VALUE;
+static char      g_con_ibuf[MAX_LINE];
+static int       g_con_ilen = 0;
 static SOCKET    g_sock     = INVALID_SOCKET;
 static int       g_state    = ST_IDLE;
 static char      g_host[256];
@@ -80,11 +90,34 @@ static int       g_accum_len = 0;
 static WNDPROC   g_in_orig  = NULL;
 
 /* ================================================================
+ * Console helpers
+ * ================================================================ */
+static void con_detect(void)
+{
+    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD  mode;
+    if (h && h != INVALID_HANDLE_VALUE && GetConsoleMode(h, &mode)) {
+        g_con_mode = 1;
+        g_con_out  = h;
+        g_con_in   = GetStdHandle(STD_INPUT_HANDLE);
+    }
+}
+
+static void con_write(const char *text)
+{
+    DWORD written;
+    int   len = lstrlen(text);
+    if (!g_con_mode || g_con_out == INVALID_HANDLE_VALUE || len <= 0) return;
+    WriteFile(g_con_out, text, (DWORD)len, &written, NULL);
+}
+
+/* ================================================================
  * Helpers
  * ================================================================ */
 static void out_append(const char *text)
 {
     int len;
+    if (g_con_mode) con_write(text);
     if (!g_out) return;
     len = GetWindowTextLength(g_out);
     SendMessage(g_out, EM_SETSEL, (WPARAM)len, (LPARAM)len);
@@ -264,9 +297,25 @@ static void process_recv(const char *buf, int len)
 static void do_connect(void)
 {
     char msg[192];
+    unsigned long ip;
     g_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (g_sock == INVALID_SOCKET) {
         out_append("[socket() failed]\r\n"); return;
+    }
+    ip = inet_addr(g_host);
+    if (ip != INADDR_NONE) {
+        /* Already an IP address — connect directly, skip DNS */
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family      = AF_INET;
+        addr.sin_addr.s_addr = ip;
+        addr.sin_port        = htons((unsigned short)g_port);
+        WSAAsyncSelect(g_sock, g_hwnd, WM_LM_RECV, FD_CONNECT|FD_READ|FD_CLOSE);
+        connect(g_sock, (struct sockaddr *)&addr, sizeof(addr));
+        g_state = ST_CONNECTING;
+        sprintf(msg, "[Connecting to %s:%d...]\r\n", g_host, g_port);
+        out_append(msg);
+        return;
     }
     sprintf(msg, "[Resolving %s...]\r\n", g_host);
     out_append(msg);
@@ -325,23 +374,28 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     case WM_CREATE: {
         HFONT hf = (HFONT)GetStockObject(SYSTEM_FIXED_FONT);
-        g_out = CreateWindow("EDIT","",
-                    WS_CHILD|WS_VISIBLE|WS_VSCROLL|
-                    ES_MULTILINE|ES_AUTOVSCROLL|ES_READONLY,
-                    0,0,100,100,hwnd,(HMENU)IDC_OUT,g_hinst,NULL);
-        SendMessage(g_out,WM_SETFONT,(WPARAM)hf,FALSE);
-        g_in = CreateWindow("EDIT","",
-                    WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL,
-                    0,0,100,INPUT_H,hwnd,(HMENU)IDC_IN,g_hinst,NULL);
-        SendMessage(g_in,WM_SETFONT,(WPARAM)hf,FALSE);
-        g_in_orig=(WNDPROC)SetWindowLong(g_in,GWL_WNDPROC,(LONG)InSubclass);
-        {
-            HFONT hfb = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-            HWND btn = CreateWindow("BUTTON","Send",
-                        WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
-                        0,0,BTN_W,INPUT_H,hwnd,(HMENU)IDC_SEND,g_hinst,NULL);
-            SendMessage(btn,WM_SETFONT,(WPARAM)hfb,FALSE);
+        if (!g_con_mode) {
+            /* GUI controls only needed when not in console-only mode */
+            g_out = CreateWindow("EDIT","",
+                        WS_CHILD|WS_VISIBLE|WS_VSCROLL|
+                        ES_MULTILINE|ES_AUTOVSCROLL|ES_READONLY,
+                        0,0,100,100,hwnd,(HMENU)IDC_OUT,g_hinst,NULL);
+            SendMessage(g_out,WM_SETFONT,(WPARAM)hf,FALSE);
+            g_in = CreateWindow("EDIT","",
+                        WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL,
+                        0,0,100,INPUT_H,hwnd,(HMENU)IDC_IN,g_hinst,NULL);
+            SendMessage(g_in,WM_SETFONT,(WPARAM)hf,FALSE);
+            g_in_orig=(WNDPROC)SetWindowLong(g_in,GWL_WNDPROC,(LONG)InSubclass);
+            {
+                HFONT hfb = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+                HWND btn = CreateWindow("BUTTON","Send",
+                            WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
+                            0,0,BTN_W,INPUT_H,hwnd,(HMENU)IDC_SEND,g_hinst,NULL);
+                SendMessage(btn,WM_SETFONT,(WPARAM)hfb,FALSE);
+            }
         }
+        if (g_con_mode)
+            SetTimer(hwnd, WM_LM_CONTIM, CON_POLL_MS, NULL);
         return 0;
     }
 
@@ -356,6 +410,52 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_COMMAND:
         if (LOWORD(wp) == IDC_SEND) { do_send(); return 0; }
         break;
+
+    case WM_TIMER:
+        if ((int)wp == WM_LM_CONTIM && g_con_mode &&
+            g_con_in != INVALID_HANDLE_VALUE) {
+            /* Poll stdin for key events */
+            INPUT_RECORD ir;
+            DWORD count;
+            while (PeekConsoleInput(g_con_in, &ir, 1, &count) && count > 0) {
+                ReadConsoleInput(g_con_in, &ir, 1, &count);
+                if (ir.EventType == KEY_EVENT && ir.Event.KeyEvent.bKeyDown) {
+                    char c = ir.Event.KeyEvent.uChar.AsciiChar;
+                    if (c == '\r' || c == '\n') {
+                        g_con_ibuf[g_con_ilen] = '\0';
+                        con_write("\r\n");
+                        if (g_con_ilen > 0) {
+                            if (g_state == ST_CONNECTED) {
+                                char sbuf[MAX_LINE + 4];
+                                int  slen = g_con_ilen;
+                                char echo[MAX_LINE + 16];
+                                memcpy(sbuf, g_con_ibuf, slen);
+                                sbuf[slen]   = '\r';
+                                sbuf[slen+1] = '\n';
+                                sbuf[slen+2] = '\0';
+                                net_send(sbuf);
+                                sprintf(echo, "<%s> %s\r\n", g_handle, g_con_ibuf);
+                                con_write(echo);
+                            } else {
+                                con_write("[not connected]\r\n");
+                            }
+                        }
+                        g_con_ilen = 0;
+                    } else if (c == '\b') {
+                        if (g_con_ilen > 0) {
+                            g_con_ilen--;
+                            con_write("\b \b");
+                        }
+                    } else if (c >= 0x20 && g_con_ilen < MAX_LINE - 1) {
+                        char echo2[2];
+                        g_con_ibuf[g_con_ilen++] = c;
+                        echo2[0] = c; echo2[1] = '\0';
+                        con_write(echo2);
+                    }
+                }
+            }
+        }
+        return 0;
 
     case WM_LM_DNS: {
         struct hostent    *he;
@@ -466,9 +566,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
     }
 
     g_hinst = hInst;
+    con_detect();
 
     if (WSAStartup(MAKEWORD(1,1),&wsd) != 0) {
-        MessageBox(NULL,"WSAStartup failed.","Lightman",MB_OK|MB_ICONSTOP);
+        if (g_con_mode) con_write("WSAStartup failed.\r\n");
+        else MessageBox(NULL,"WSAStartup failed.","Lightman",MB_OK|MB_ICONSTOP);
         return 1;
     }
 
@@ -493,12 +595,22 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
     sprintf(title,"Lightman  \xe6ldreC2  [%s:%d]", g_host, g_port);
     g_hwnd = CreateWindow("LightmanMain", title,
                 WS_OVERLAPPEDWINDOW,
-                CW_USEDEFAULT,CW_USEDEFAULT,800,500,
+                CW_USEDEFAULT,CW_USEDEFAULT,800,600,
                 NULL,NULL,hInst,NULL);
     if (!g_hwnd) return 1;
 
-    ShowWindow(g_hwnd, nCmdShow);
-    UpdateWindow(g_hwnd);
+    if (g_con_mode) {
+        /* Console mode: run headless, print banner to stdout */
+        char banner[256];
+        sprintf(banner, "Lightman  \xe6ldreC2  [%s:%d]\r\n"
+                        "Type messages and press Enter. Ctrl+C to quit.\r\n",
+                g_host, g_port);
+        con_write(banner);
+        ShowWindow(g_hwnd, SW_HIDE);
+    } else {
+        ShowWindow(g_hwnd, nCmdShow);
+        UpdateWindow(g_hwnd);
+    }
 
     /* Prompt for handle before connecting */
     if (!ask_handle()) {

@@ -356,9 +356,25 @@ static void process_recv(const char *buf, int len)
 static void do_connect_async(void)
 {
     char m[192];
+    unsigned long ip;
     g_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (g_sock == INVALID_SOCKET) {
         out_append("[socket() failed]\r\n"); return;
+    }
+    ip = inet_addr(g_host);
+    if (ip != INADDR_NONE) {
+        /* Already an IP address — connect directly, skip DNS */
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family      = AF_INET;
+        addr.sin_addr.s_addr = ip;
+        addr.sin_port        = htons((unsigned short)g_port);
+        WSAAsyncSelect(g_sock, g_hwnd, WM_FL_RECV, FD_CONNECT|FD_READ|FD_CLOSE);
+        connect(g_sock, (struct sockaddr *)&addr, sizeof(addr));
+        g_state = ST_CONNECTING;
+        sprintf(m, "[Connecting to %s:%d...]\r\n", g_host, g_port);
+        out_append(m);
+        return;
     }
     sprintf(m,"[Resolving %s...]\r\n",g_host);
     out_append(m);
@@ -573,7 +589,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
 
     g_hwnd = CreateWindow("FlynnMain","Flynn  \xe6ldreC2",
                 WS_OVERLAPPEDWINDOW,
-                CW_USEDEFAULT,CW_USEDEFAULT,900,580,
+                CW_USEDEFAULT,CW_USEDEFAULT,900,680,
                 NULL,NULL,hInst,NULL);
     if (!g_hwnd) return 1;
 

@@ -1,0 +1,168 @@
+/*
+ * strings_de.rc  --  AeldreC2  --  Deutsch  --  base offset 4000
+ *
+ * Zu Ehren unserer deutschen Nachbarn — und der deutschen Minderheit
+ * in Sønderjylland.  Herzlich willkommen.
+ */
+
+STRINGTABLE
+BEGIN
+    /* Allgemein */
+    4001  "OK"
+    4002  "Abbrechen"
+    4003  "Fehler"
+    4004  "Schließen"
+    4005  "Durchsuchen..."
+    4006  "Speichern"
+    4007  "Kopieren"
+    4008  "Neu"
+    4009  "Öffnen"
+    4010  "Ja"
+    4011  "Nein"
+    4012  "Hilfe"
+    4013  "Über"
+    4014  "Beenden"
+    4015  "Verbinden"
+    4016  "Trennen"
+    4017  "Stopp"
+    4018  "Generieren"
+    4019  "Senden"
+    4020  "Bereit."
+    4021  "Dieses Programm wurde auf Britischem Englisch verfasst.\r\nEine deutsche Übersetzung wurde mit Sorgfalt erstellt.\r\nFür Verbesserungsvorschläge sind wir dankbar.\r\nWir ehren die deutschsprachige Minderheit in Sønderjylland."
+    4022  "Über \xc6ldreC2"
+
+    /* Joshua */
+    4100  "Joshua  \xc6ldreC2"
+    4101  "Serverprotokoll / Konsole"
+    4102  "&Datei"
+    4103  "&Tank"
+    4104  "&Fenster"
+    4105  "&Neue Sitzung\tStrg+N"
+    4106  "&Trennen"
+    4107  "&Beenden"
+    4108  "&Systeminformation"
+    4109  "&Prozessliste"
+    4110  "&Verzeichnisinhalt..."
+    4111  "&Datei herunterladen..."
+    4112  "&Datei hochladen..."
+    4113  "&Screenshot"
+    4114  "&Registrierungsabfrage..."
+    4115  "Horizontal &nebeneinander"
+    4116  "Vertikal &nebeneinander"
+    4117  "Über&lappend"
+    4118  "Alle &schließen"
+    4119  "Joshua  \xc6ldreC2  \x97  Programmstart"
+    4120  "Überwachungsport:"
+    4121  "Serverschlüssel:"
+    4122  "Neu generieren"
+    4123  "Starten"
+    4124  ":%d [wartet]"
+    4125  "[Tank verbunden: %s  OS %s]\r\n"
+    4126  " [bereit]"
+    4127  " [beschäftigt]"
+    4128  " [getrennt]"
+    4129  "&Weiterleitung"
+    4130  "&Portweiterleitung..."
+    4131  "&SOCKS4-Proxy..."
+    4132  "Weiterleitung &stoppen"
+
+    /* Grid */
+    4200  "Grid \x97 Portscanner"
+    4201  "Ziel:"
+    4202  "Ports:"
+    4203  "Zeitüberschreitung:"
+    4204  "Pool:"
+    4205  "Banner-Erkennung"
+    4206  "Scannen"
+    4207  "&Ansicht"
+    4208  "&Standard"
+    4209  "Solarized &Dunkel"
+    4210  "Solarized &Hell"
+    4211  "&Terminal"
+    4212  "  Bereit."
+    4213  "  Fertig.  %d / %d  offen: %d"
+
+    /* Lightman */
+    4300  "Lightman  \xc6ldreC2"
+    4301  "Lightman  \xc6ldreC2"
+    4302  "Bitte geben Sie Ihren Spitznamen ein:"
+    4303  "Verbinden"
+    4304  "Verwendung: lightman.exe <Host> <Port> <Schlüssel>\r\n\r\nBeispiel: lightman.exe 10.0.0.1 4444 A3F7B291"
+    4305  "Lightman  \xc6ldreC2  [getrennt]"
+
+    /* Flynn */
+    4350  "Flynn  \xc6ldreC2"
+    4351  "Flynn  \xc6ldreC2  \x97  Verbinden"
+    4352  "Joshua-Host:"
+    4353  "Port:"
+    4354  "Serverschlüssel:"
+    4355  "Ihr Spitzname:"
+    4356  "Verbinden"
+    4357  "Flynn  \xc6ldreC2  [getrennt]"
+
+    /* CLU */
+    4400  "CLU  \xc6ldreC2 Implantat-Generator"
+    4401  "Vorlage:"
+    4402  "Ausgabe:"
+    4403  "Host:"
+    4404  "Port:"
+    4405  "TLS"
+    4406  "Generieren"
+
+    /* markuped */
+    4450  "markuped \x97 Markdown-Editor"
+    4451  "markuped"
+    4452  "markuped  \x97  Markdown-Editor\r\nKompatibel mit Win32s / Win32\r\n\r\nUnterstützt: Überschriften, Fett, Kursiv, Code,\r\nCode-Blöcke, Blockzitate, Listen, Aufgabenlisten,\r\nTrennlinien, Hyperlinks.\r\n\r\n\xc6ldreC2-Werkzeugsatz"
+    4453  "&Datei"
+    4454  "&Bearbeiten"
+    4455  "&Format"
+    4456  "&Ansicht"
+    4457  "&Fett\tStrg+B"
+    4458  "&Kursiv\tStrg+I"
+    4459  "Inline-&Code"
+    4460  "Überschrift &1"
+    4461  "Überschrift &2"
+    4462  "Überschrift &3"
+    4463  "&Blockzitat"
+    4464  "&Listenelement"
+    4465  "Horizontale &Linie"
+    4466  "&Vorschau umschalten\tStrg+P"
+
+    /* wget */
+    4500  "wget \x97 Herunterladen"
+    4501  "wget  \x97  Datei herunterladen"
+    4502  "URL:"
+    4503  "Speichern unter (optional):"
+    4504  "Herunterladen"
+    4505  "Verbinde..."
+    4506  "Fertig: %ld Byte"
+
+    /* ncnt */
+    4550  "Verwendung: ncnt [-l -p <Port>] [<Host> <Port>] [-e <Befehl>] [-v]\r\n  -l -p <Port>   Abhörmodus\r\n  <Host> <Port>  Verbindungsmodus\r\n  -e <Befehl>    Programm bei Verbindung ausführen\r\n  -v             Ausführlich\r\nNetcat für Windows NT \x97 inspiriert von Weld Pond (Chris Wysopal)"
+    4551  "Warte auf Port %d...\r\n"
+    4552  "Verbunden mit %s:%d\r\n"
+    4553  "Verbindung geschlossen.\r\n"
+
+    /* svcany */
+    4600  "Verwendung: svcany <Aktion> [Argumente]\r\n  install <Name> <Anzeigename> <Pfad> [auto|manual|disabled]\r\n  remove  <Name>\r\n  start   <Name>\r\n  stop    <Name>\r\n  query   <Name>\r\n  list"
+    4601  "Dienst '%s' installiert.\r\n"
+    4602  "Dienst '%s' entfernt.\r\n"
+    4603  "Dienst '%s' gestartet.\r\n"
+    4604  "Dienst '%s' gestoppt.\r\n"
+    4605  "Fehler: Der Dienststeuerungs-Manager ist auf dieser Plattform nicht verfügbar.\r\n"
+
+    /* regcli */
+    4650  "Verwendung: regcli <Aktion> <Schlüssel> [/v <Name>] [/t <Typ>] [/d <Daten>] [<Datei>]\r\n  query  HKLM\\Schlüssel [/v Name]\r\n  set    HKLM\\Schlüssel /v Name /t REG_SZ /d Daten\r\n  delete HKLM\\Schlüssel [/v Name]\r\n  export HKLM\\Schlüssel aus.reg\r\n  import ein.reg"
+    4651  "Schlüssel oder Wert nicht gefunden.\r\n"
+    4652  "Vorgang erfolgreich.\r\n"
+    4653  "Windows Registry Editor Version 5.00\r\n\r\n"
+
+    /* Hilfswerkzeuge */
+    4700  "Verwendung: whoami [-v]\r\n  -v   ausführlich (Gruppen und Berechtigungen)"
+    4710  "Verwendung: arp [-a] [-s <Subnetz/CIDR>] [-t ms]\r\n  -a           ARP-Tabelle anzeigen\r\n  -s <Netz>    Ping-Sweep und ARP anzeigen\r\n  -t ms        Ping-Zeitüberschreitung (Standard 200)"
+    4720  "Verwendung: stager <Datei> [-p <Port>] [-n <Anzahl>] [-q]\r\n  -p <Port>    Überwachungsport (Standard zufällig)\r\n  -n <Anzahl>  N-mal bereitstellen, dann beenden (Standard 1)\r\n  -q           Keine Ausgabe"
+    4721  "Stelle '%s' auf Port %d bereit  (wird %d Mal bereitgestellt)\r\n"
+    4722  "An %s gesendet  (%ld Byte)\r\n"
+    4730  "Verwendung: clip <Aktion> [Argumente]\r\n  read          Zwischenablagentext auf stdout ausgeben\r\n  write <Text>  Zwischenablagentext setzen\r\n  set <Datei>   Datei in Zwischenablage laden\r\n  clear         Zwischenablage leeren"
+    4740  "Verwendung: timestamp <Ziel> <Quelle>              Zeitstempel kopieren\r\n             timestamp <Ziel> <Datum> <Uhrzeit>    Zeitstempel setzen\r\n  Datum: JJJJ-MM-TT   Uhrzeit: SS:MM:SS"
+END
