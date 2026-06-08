@@ -2692,6 +2692,14 @@ static LRESULT CALLBACK ChildProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     }
+    case WM_MDIACTIVATE:
+        /* lp = window being activated.  Set focus to the input field so
+         * the user can type immediately without clicking first.          */
+        if ((HWND)lp == hwnd) {
+            HWND in = GetDlgItem(hwnd, IDC_IN);
+            if (in && IsWindowVisible(in)) SetFocus(in);
+        }
+        return 0;
     case WM_COMMAND:
         if (LOWORD(wp)==IDC_SEND) { session_send(s); return 0; }
         break;
@@ -2784,6 +2792,11 @@ static LRESULT CALLBACK FrameProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CREATE: {
         CLIENTCREATESTRUCT ccs;
         HFONT hf = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+
+        /* g_frame must be set before new_session() calls WSAAsyncSelect.
+         * CreateWindow fires WM_CREATE before returning, so the assignment
+         * in WinMain hasn't happened yet — set it here from hwnd.        */
+        g_frame = hwnd;
 
         /* Session list on the left */
         g_sess_list = CreateWindow("LISTBOX", NULL,

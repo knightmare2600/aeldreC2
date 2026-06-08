@@ -290,7 +290,7 @@ All binaries are built to `windows/`. Build all at once with `./build-c2.sh`, or
 | `flynn.exe` | Win32s / NT / 95 | GUI operator client (connects to Joshua) |
 | `ncwfw.exe` | Win32s / NT / 95 | Netcat-style TCP relay |
 | `grid.exe` | Win32s / NT / 95 | TCP port scanner (GUI / auto-detect) |
-| `gridcli.exe` | Win32 / NT / 95 | TCP port scanner (pure console, for command.com) |
+| `gridcli.exe` | Win32 / NT 3.1+ | TCP port scanner (pure console, NT `cmd.exe` only — use `grid.exe` on WFW) |
 | `ncnt.exe` | Win32 / NT 3.1+ | Netcat for NT — inspired by Weld Pond (L0pht, ~1998) |
 | `svcany.exe` | Win32 / NT 3.1+ | Install/remove/start/stop any executable as an NT service |
 | `regcli.exe` | Win32 / NT 3.1+ | CLI registry tool for NT 3.x/4.x (fills gap before reg.exe) |
@@ -299,9 +299,9 @@ All binaries are built to `windows/`. Build all at once with `./build-c2.sh`, or
 | `stager.exe` | Win32 / NT 3.1+ | Tiny HTTP file server — serve a file once then exit |
 | `clip.exe` | Win32 / NT 3.1+ | Clipboard read/write from command line |
 | `timestmp.exe` | Win32 / NT 3.1+ | File timestamp copy and set — 8.3: timestmp (authorised forensic testing) |
-| `yori16.exe` | Win 3.1 / WFW 3.11 | Remote screen/control server — Win16 (no Win32s needed) |
-| `yori32.exe` | Win32s / Win95 / NT 3.1+ | Remote screen/control server — Win32 |
-| `yoriview.exe` | Win32 / NT 4+ | Remote screen viewer — operator side (codename: THE_UNIVERSAL) |
+| `yori16.exe` | Win 3.1 / WFW 3.11 | Remote screen server — runs **on target**; listens on TCP 5353 |
+| `yori32.exe` | Win32s / Win95 / NT 3.1+ | Remote screen server — runs **on target**; listens on TCP 5353 |
+| `yoriview.exe` | Win32 / NT 4+ | Remote screen viewer — runs **on operator box**; connect to target IP:5353 |
 | `ipcalc32.exe` | Win32s / NT / 95 | Subnet calculator |
 | `ipcalc16.exe` | Win 3.1 / WFW 3.11 | Subnet calculator (16-bit) |
 | `markuped.exe` | Win32s / NT / 95 | Markdown editor (split-pane, live preview) |
