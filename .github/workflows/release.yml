@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  # Manual trigger with explicit version string
   workflow_dispatch:
     inputs:
       version:
@@ -13,9 +14,14 @@ on:
         type: boolean
         default: false
 
+  # Tag-based trigger: push v* tag to auto-release
+  push:
+    tags:
+      - 'v*'
+
 jobs:
   # ------------------------------------------------------------------
-  # 1. Build all binaries and produce bundled installers
+  # 1. Build all binaries, run installers, produce ZIP
   # ------------------------------------------------------------------
   build:
     name: Build
@@ -24,6 +30,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false"             >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.version }}"    >> "$GITHUB_OUTPUT"
+            echo "prerelease=${{ inputs.prerelease }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -37,13 +54,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build binaries and bundle installers
+      - name: Build binaries, installers and tools ZIP
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/src" \
             aeldrec2-builder \
             wmake -f Makefile.wc dist \
-              "XFLAGS=-DAELDRE_VERSION=\"${{ inputs.version }}\""
+              "XFLAGS=-DAELDRE_VERSION=\"${{ steps.ver.outputs.version }}\""
+
+      - name: Rename tools ZIP to include version
+        run: |
+          mv output/aeldrec2-tools.zip \
+             "output/aeldrec2-${{ steps.ver.outputs.version }}-tools.zip"
 
       - name: Upload compiled tools
         uses: actions/upload-artifact@v4
@@ -57,6 +79,13 @@ jobs:
         with:
           name: setup-installers
           path: output/exe/
+          retention-days: 7
+
+      - name: Upload tools ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: tools-zip
+          path: output/aeldrec2-${{ steps.ver.outputs.version }}-tools.zip
           retention-days: 7
 
   # ------------------------------------------------------------------
@@ -81,7 +110,8 @@ jobs:
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends wine-stable python3-pytest python3-requests xz-utils
+          sudo apt-get install -y --no-install-recommends \
+            wine-stable python3-pytest python3-requests
           WINEDEBUG=-all DISPLAY= wineboot --init 2>/dev/null || true
 
       - name: Run test suite
@@ -91,7 +121,7 @@ jobs:
         run: python3 -m pytest tests/ -v --tb=short -p no:cacheprovider
 
   # ------------------------------------------------------------------
-  # 3. Package and publish GitHub release
+  # 3. Publish GitHub release
   # ------------------------------------------------------------------
   release:
     name: Release
@@ -104,11 +134,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download compiled tools
-        uses: actions/download-artifact@v4
-        with:
-          name: compiled-tools
-          path: output/compiled/
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false"             >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.version }}"       >> "$GITHUB_OUTPUT"
+            echo "prerelease=${{ inputs.prerelease }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Download setup installers
         uses: actions/download-artifact@v4
@@ -116,21 +151,20 @@ jobs:
           name: setup-installers
           path: output/exe/
 
-      - name: Build tools ZIP
-        run: |
-          cd output/compiled
-          zip -j "../../aeldreC2-${{ inputs.version }}-tools.zip" *
-          echo "--- tools ZIP contents ---"
-          unzip -l "../../aeldreC2-${{ inputs.version }}-tools.zip"
+      - name: Download tools ZIP
+        uses: actions/download-artifact@v4
+        with:
+          name: tools-zip
+          path: output/
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v${{ inputs.version }}"
-          name: "ÆldreC2 v${{ inputs.version }}"
-          prerelease: ${{ inputs.prerelease }}
+          tag_name: "v${{ steps.ver.outputs.version }}"
+          name: "ÆldreC2 v${{ steps.ver.outputs.version }}"
+          prerelease: ${{ steps.ver.outputs.prerelease }}
           body: |
-            ## ÆldreC2 v${{ inputs.version }}
+            ## ÆldreC2 v${{ steps.ver.outputs.version }}
 
             Retro C2 framework targeting Windows 3.11 / Win32s / Windows NT 3.x–4.
 
@@ -138,34 +172,74 @@ jobs:
 
             | File | Description |
             |------|-------------|
-            | `setup16.exe` | Win16 self-extracting installer — runs on WFW 3.11 / Windows 3.1 |
+            | `setup16.exe` | Win16 self-extracting installer — runs on bare WFW 3.11 / Windows 3.1 |
             | `setup32.exe` | Win32 self-extracting installer — runs on Win32s / Win95 / NT 3.1+ |
 
-            ### Tools (individual binaries — also in `setup16.exe` / `setup32.exe`)
+            ### Tools ZIP
 
-            **C2 tools**
-            | Binary | Platform |
-            |--------|----------|
-            | `joshua.exe` | Win32s / NT / 95 — C2 controller |
-            | `tank.exe` | Win32s / NT / 95 — connect-back implant |
-            | `tank16.exe` | Win 3.1 / WFW 3.11 — 16-bit implant |
-            | `clu.exe` | Win32s / NT / 95 — implant generator |
-            | `ncwfw.exe` | Win32s / NT / 95 — netcat relay |
-            | `grid.exe` | Win32s / NT / 95 — port scanner |
-            | `ipcalc32.exe` | Win32s / NT / 95 — subnet calculator |
-            | `ipcalc16.exe` | Win 3.1 / WFW 3.11 — subnet calculator |
-            | `markuped.exe` | Win32s / NT / 95 — Markdown editor |
-            | `wget.exe` | Win32s / NT / 95 — HTTP/HTTPS/FTP downloader |
-            | `wget16.exe` | Win 3.1 / WFW 3.11 — HTTP downloader |
-            | `lightman.exe` | Win32s / NT / 95 — lateral movement |
-            | `flynn.exe` | Win32s / NT / 95 — operator shell |
+            `aeldrec2-${{ steps.ver.outputs.version }}-tools.zip` — all binaries flat-packed, WinZip-compatible.
 
-            **PuTTY suite (Win32s-compatible build)**
+            ### C2 tools
+
+            | Binary | Platform | Role |
+            |--------|----------|------|
+            | `joshua.exe` | Win32s / NT / 95 | C2 controller (MDI, themes, scripting, packet viewer) |
+            | `tank.exe` | Win32s / NT / 95 | Connect-back implant (built-in scanner, macros) |
+            | `tank16.exe` | Win 3.1 / WFW 3.11 | 16-bit connect-back implant |
+            | `clu.exe` | Win32s / NT / 95 | Implant generator / binary patcher |
+            | `lightman.exe` | Win32s / NT / 95 | CLI operator client |
+            | `flynn.exe` | Win32s / NT / 95 | GUI operator client |
+
+            ### Network tools
+
+            | Binary | Platform | Role |
+            |--------|----------|------|
+            | `grid.exe` | Win32s / NT / 95 | TCP port scanner (GUI) |
+            | `gridcli.exe` | Win32 / NT | TCP port scanner (console / command.com) |
+            | `dumont.exe` | Win32 / NT | Network mapper — renders grid scan output as node map |
+            | `ncwfw.exe` | Win32s / NT / 95 | Netcat relay (optional TLS) |
+            | `ncnt.exe` | Win32 / NT | Netcat for NT (console) |
+            | `arp.exe` | Win32 / NT 4+ | ARP table viewer + ICMP ping sweep |
+            | `stager.exe` | Win32 / NT | Tiny HTTP file staging server |
+
+            ### NT utilities
+
+            | Binary | Platform | Role |
+            |--------|----------|------|
+            | `svcany.exe` | Win32 / NT | Install any executable as an NT service |
+            | `regcli.exe` | Win32 / NT | CLI registry tool for NT 3.x / 4.0 |
+            | `whoami.exe` | Win32 / NT | Identity / SID / groups for pre-XP NT |
+            | `clip.exe` | Win32 / NT | Clipboard read / write from command line |
+            | `timestmp.exe` | Win32 / NT | File timestamp copy and set |
+
+            ### General tools
+
+            | Binary | Platform | Role |
+            |--------|----------|------|
+            | `ipcalc32.exe` | Win32s / NT / 95 | Subnet calculator |
+            | `ipcalc16.exe` | Win 3.1 / WFW 3.11 | Subnet calculator (16-bit) |
+            | `wget.exe` | Win32s / NT / 95 | HTTP / HTTPS / FTP downloader |
+            | `wget16.exe` | Win 3.1 / WFW 3.11 | HTTP downloader (16-bit) |
+            | `markuped.exe` | Win32s / NT / 95 | Markdown editor (split-pane, live preview) |
+            | `jloshtog.exe` | Win32s / NT / 95 | Joshua log viewer |
+
+            ### Remote control
+
+            | Binary | Platform | Role |
+            |--------|----------|------|
+            | `yori16.exe` | Win 3.1 / WFW 3.11 | Remote screen / control server (Win16) |
+            | `yori32.exe` | Win32s / Win95 / NT | Remote screen / control server (Win32) |
+            | `yoriview.exe` | Win32 / NT 4+ | Remote screen viewer |
+
+            ### PuTTY suite (Win32s-compatible build)
+
             `putty.exe` `puttytel.exe` `puttygen.exe` `pageant.exe` `winsftp.exe`
 
-            > For authorised engagements, CTF, and educational use only.
+            ---
+
+            > ÆldreC2 is an educational and research project for authorised administration, testing, and historical computing experimentation.
           files: |
             output/exe/setup16.exe
             output/exe/setup32.exe
-            aeldreC2-${{ inputs.version }}-tools.zip
+            output/aeldrec2-${{ steps.ver.outputs.version }}-tools.zip
           draft: false
