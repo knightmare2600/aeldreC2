@@ -435,7 +435,7 @@ dist: all .SYMBOLIC
 	sh -c "mkdir -p ../output/compiled ../output/exe"
 	python3 ../tools/mksetup.py --out16 output/exe/setup16.exe --out32 output/exe/setup32.exe
 	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
-	sh -c "cd ../output && zip -9 -j aeldrec2-tools.zip compiled/*.exe compiled/*.dll exe/setup16.exe exe/setup32.exe && echo 'Created: output/aeldrec2-tools.zip'"
+	sh -c "cd ../output && zip -9 -j aeldrec2-tools.zip compiled/*.exe compiled/*.dll exe/setup16.exe exe/setup32.exe ../README.md && echo 'Created: output/aeldrec2-tools.zip'"
 
 # =================================================================
 # be_list.c — per-target compilation with different defines
@@ -1873,7 +1873,7 @@ yori: yori16.exe yori32.exe yoriview.exe .SYMBOLIC
 dumont.obj: dumont.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c dumont.c
 
-dumont.res: dumont.rc
+dumont.res: dumont.rc dumont.ico
 	$(RCPATH) $(RCFLAGS) dumont.rc -o dumont.res
 
 dumont.exe: dumont.obj dumont.res
@@ -1884,7 +1884,7 @@ dumont.exe: dumont.obj dumont.res
 jloshtog.obj: jloshtog.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c jloshtog.c
 
-jloshtog.res: jloshtog.rc
+jloshtog.res: jloshtog.rc jloshtog.ico
 	$(RCPATH) $(RCFLAGS) jloshtog.rc -o jloshtog.res
 
 jloshtog.exe: jloshtog.obj jloshtog.res
@@ -1902,14 +1902,21 @@ jloshtog.exe: jloshtog.obj jloshtog.res
 # =================================================================
 
 icons: &
-    arp.ico clip.ico flynn.ico grid.ico gridcli.ico ipcalc.ico &
-    joshua.ico lightcycle.ico lightman.ico markuped.ico ncnt.ico &
-    ncwfw.ico reco.ico regcli.ico stager.ico svcany.ico tank.ico &
-    timestmp.ico wget.ico whoami.ico yori.ico yoriview.ico &
+    arp.ico clip.ico dumont.ico flynn.ico grid.ico gridcli.ico &
+    ipcalc.ico jloshtog.ico joshua.ico lightcycle.ico lightman.ico &
+    markuped.ico ncnt.ico ncwfw.ico reco.ico regcli.ico stager.ico &
+    svcany.ico tank.ico timestmp.ico wget.ico whoami.ico &
+    yori.ico yoriview.ico &
     .SYMBOLIC
 
 arp.ico: ../icons/arp.png
 	$(ICON_CONV) ../icons/arp.png arp.ico
+
+dumont.ico: ../icons/dumont.png
+	$(ICON_CONV) ../icons/dumont.png dumont.ico
+
+jloshtog.ico: ../icons/jloshtog.png
+	$(ICON_CONV) ../icons/jloshtog.png jloshtog.ico
 
 clip.ico: ../icons/clip.png
 	$(ICON_CONV) ../icons/clip.png clip.ico

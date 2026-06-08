@@ -820,7 +820,10 @@ static LRESULT CALLBACK InputBoxProc(HWND, UINT, WPARAM, LPARAM);
  * ================================================================ */
 static void tls_load(void)
 {
+    /* NT 4+ / Win95: secur32.dll.  NT 3.1 / 3.51: security.dll.
+     * Try both; if neither is present, TLS is silently disabled.   */
     g_secur32 = LoadLibrary("secur32.dll");
+    if (!g_secur32) g_secur32 = LoadLibrary("security.dll");
     if (!g_secur32) return;
 #define GF(v,n) v=(void*)GetProcAddress(g_secur32,n); if(!v){FreeLibrary(g_secur32);g_secur32=NULL;return;}
     GF(p_AcqCred,    "AcquireCredentialsHandleA")

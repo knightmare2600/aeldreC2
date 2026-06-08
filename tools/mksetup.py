@@ -60,6 +60,7 @@ def collect_files(c2_dir: str, putty_dir: str, repo_root: str, dist_dir: str):
     root_extras = [
         ('AELDREC2.GRP', 'AELDREC2.GRP'),
         ('GPL30.TXT',    'gpl30.txt'),
+        ('README.MD',    'README.md'),   # readable in markuped.exe
     ]
     for dest_name, src_name in root_extras:
         path = os.path.join(repo_root, src_name)
