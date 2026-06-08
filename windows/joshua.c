@@ -111,15 +111,24 @@ static int          g_tls_avail  = 0;
 #define IDM_TANK_REGQ         2104
 #define IDM_TANK_PUT          2105
 #define IDM_TANK_SCREENSHOT   2106
+#define IDM_TANK_SCAN         2107
 #define IDM_TANK_PORTFWD      2108
 #define IDM_TANK_SOCKS4       2109
 #define IDM_TANK_RELAYSTOP    2110
+
+#define IDM_TANK_PKTVIEW      2115
+#define IDM_TANK_SCRIPT_RUN   2111
+#define IDM_TANK_MACRO_REC    2112
+#define IDM_TANK_MACRO_SAVE   2113
+#define IDM_TANK_MACRO_PLAY   2114
 
 #define IDM_WIN_TILE_H        2010
 #define IDM_WIN_TILE_V        2011
 #define IDM_WIN_CASCADE       2012
 #define IDM_WIN_CLOSEALL      2013
 #define IDM_HELP_ABOUT        2020
+
+#define IDM_VIEW_THEME_BASE   2200   /* 2200..2220 — one per theme */
 
 #define IDC_DLG_HOST          3000
 #define IDC_DLG_PORT          3001
@@ -141,6 +150,12 @@ static int          g_tls_avail  = 0;
 
 #define WM_NC_SOCKET (WM_APP + 1)
 #define WM_NC_DNS    (WM_APP + 2)
+
+#define IDC_PKT_OUT    301
+#define IDC_PKT_STATUS 302
+#define WC_PKTVIEW     "JoshuaPktView"
+#define PKT_IN         0
+#define PKT_OUT        1
 
 #ifndef MAXGETHOSTSTRUCT
 #define MAXGETHOSTSTRUCT 1024
@@ -170,6 +185,44 @@ static int          g_tls_avail  = 0;
 /* File receive modes */
 #define RECV_TEXT 0
 #define RECV_FILE 1
+
+/* ================================================================
+ * Theme table  (ported from fyrtaarn/internal/tui/colourmylife.go)
+ * Fields: bg=notification bg, strip=accent bar, title=title text, body=body text
+ * ================================================================ */
+typedef struct {
+    const char *name;   /* persisted to WIN.INI */
+    const char *label;  /* menu display text     */
+    COLORREF    bg;
+    COLORREF    strip;
+    COLORREF    title;
+    COLORREF    body;
+} JoshTheme;
+
+static const JoshTheme g_themes[] = {
+    { "solarized",         "Solarized Dark",        RGB(  0, 43, 54), RGB(133,153,  0), RGB(133,153,  0), RGB(131,148,150) },
+    { "british",           "British Rail",           RGB(  0, 48,135), RGB(198, 12, 48), RGB(255,255,255), RGB(255,255,255) },
+    { "class91",           "InterCity Class 91",     RGB(255,255,255), RGB(  0,  0,  0), RGB(255,255,255), RGB(204,  0,  0) },
+    { "dark",              "Dark",                   RGB(  0,102,  0), RGB(  0,  0,  0), RGB(170,170,170), RGB(170,170,170) },
+    { "db-1980s",          "Deutsche Bundesbahn",    RGB(102,102,102), RGB(136,136,136), RGB(  0,  0,  0), RGB(  0,  0,  0) },
+    { "dsb",               "DSB",                    RGB(136,  0,  0), RGB(204,  0,  0), RGB(255,255,255), RGB(255,255,255) },
+    { "gemstones",         "Gemstones",              RGB( 68,187, 68), RGB(255,255,255), RGB(  0,102,  0), RGB(255,255,255) },
+    { "intercity-swallow", "InterCity Swallow",      RGB( 85, 85, 85), RGB( 51, 51, 51), RGB(255,255,255), RGB(255,255,255) },
+    { "irn-bru",           "IRN-BRU",                RGB(255,102,  0), RGB(255,102,  0), RGB(255,255,255), RGB(255,255,255) },
+    { "light",             "Light",                  RGB(  0,170,170), RGB(  0,119,119), RGB(  0,  0,  0), RGB(  0,  0,  0) },
+    { "matrix",            "Matrix",                 RGB(  0,  0,  0), RGB(  0,  0,  0), RGB(  0,204,  0), RGB(204,204,  0) },
+    { "network-southeast", "Network SouthEast",      RGB(255,255,255), RGB(224,224,224), RGB(  0,  0,  0), RGB(  0,  0,  0) },
+    { "ns",                "NS (Dutch Railways)",    RGB(255,255, 68), RGB(204,204,  0), RGB(  0,  0,  0), RGB(  0,  0,  0) },
+    { "pan-am",            "Pan Am",                 RGB( 68,102,204), RGB(255,255,255), RGB(  0, 68,204), RGB(255,255,255) },
+    { "procomm",           "ProComm",                RGB(  0,  0,  0), RGB(170,  0,  0), RGB(255,255,  0), RGB(255,255,255) },
+    { "renaissance",       "Renaissance",            RGB( 30, 30, 30), RGB( 48, 48, 48), RGB(208,208,208), RGB(208,208,208) },
+    { "scotrail",          "ScotRail",               RGB( 85,119,204), RGB(  0, 51,170), RGB(255,255, 85), RGB(  0,  0,  0) },
+    { "teletext",          "Teletext",               RGB(  0,  0,170), RGB(  0,  0,  0), RGB(255,255,  0), RGB(255,255,255) },
+    { "twa",               "TWA",                    RGB(136,  0,  0), RGB(204,  0,  0), RGB(255,255,255), RGB(255,255,255) },
+    { "viarail",           "VIA Rail",               RGB(255,255, 68), RGB(204,204,  0), RGB(  0,  0,  0), RGB(  0,  0,  0) },
+    { "viarail-soft",      "VIA Rail Soft",          RGB(  0, 51,170), RGB(  0, 26,110), RGB(255,255,255), RGB(255,255,255) },
+};
+#define THEME_COUNT ((int)(sizeof(g_themes)/sizeof(g_themes[0])))
 
 /* ================================================================
  * Session struct
@@ -224,6 +277,23 @@ typedef struct {
     int    pager_active;   /* 1 = waiting for NEXTPAGE/QUITPAGE */
     /* Progress bar for file receive */
     int    file_recv_last_pct;   /* last percentage painted; -1 = bar not started */
+    /* Scan TSV capture — active while a scan command is in flight    */
+    int    scan_active;
+    HANDLE scan_tsv;             /* temp file receiving TSV lines     */
+    char   scan_tsv_path[MAX_PATH];
+    /* Packet viewer                                                    */
+    HWND  pkt_hwnd;
+    DWORD pkt_in_bytes;
+    DWORD pkt_out_bytes;
+    /* Script execution — queued commands sent one per <<<DONE>>>     */
+    char **script_cmds;
+    int    script_count;
+    int    script_idx;
+    /* Macro recording                                                 */
+    int    macro_rec;            /* 1 = recording in progress         */
+    char **macro_cmds;           /* recorded command strings          */
+    int    macro_count;
+    int    macro_cap;
 } JoshSession;
 
 #define MAX_SESSIONS 16
@@ -234,6 +304,10 @@ static HWND         g_mdi     = NULL;
 static HWND         g_sess_list = NULL;
 static HINSTANCE    g_hinst   = NULL;
 static WNDPROC      g_in_orig = NULL;
+
+/* Theme state */
+static int   g_theme_idx  = 0;     /* index into g_themes[] */
+static HMENU g_theme_menu = NULL;  /* theme submenu — for checkmark updates */
 
 /* Dialog state */
 static HWND g_dlg             = NULL;
@@ -262,6 +336,418 @@ static int  g_startup_port = 4444;
 
 /* Logging */
 static FILE *g_logfile = NULL;
+
+/* mmsystem.h constants — not included since winmm.dll is loaded dynamically */
+#ifndef SND_ASYNC
+#  define SND_SYNC       0x0000
+#  define SND_ASYNC      0x0001
+#  define SND_NODEFAULT  0x0002
+#  define SND_RESOURCE   0x0004
+#  define SND_ALIAS      0x0010
+#  define SND_PURGE      0x0040
+#endif
+
+/* Forward declarations */
+static void show_notification(const char *title, const char *body);
+static void session_append(JoshSession *s, const char *text);
+static void session_send_cmd(JoshSession *s, const char *cmd);
+
+static HFONT make_font(const char *face, int pts, int bold, int italic)
+{
+    HDC dc = GetDC(NULL);
+    int lh = -MulDiv(pts, GetDeviceCaps(dc, LOGPIXELSY), 72);
+    ReleaseDC(NULL, dc);
+    return CreateFont(lh, 0, 0, 0,
+                      bold ? FW_BOLD : FW_NORMAL,
+                      italic, FALSE, FALSE,
+                      ANSI_CHARSET, OUT_DEFAULT_PRECIS,
+                      CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+                      DEFAULT_PITCH | FF_DONTCARE, face);
+}
+
+static void theme_set(int idx)
+{
+    int i;
+    if (idx < 0 || idx >= THEME_COUNT) return;
+    g_theme_idx = idx;
+    if (g_theme_menu) {
+        for (i = 0; i < THEME_COUNT; i++)
+            CheckMenuItem(g_theme_menu, (UINT)i,
+                          MF_BYPOSITION | (i == idx ? MF_CHECKED : MF_UNCHECKED));
+    }
+    WriteProfileString("AeldreC2", "Theme", g_themes[idx].name);
+}
+
+static void theme_load(void)
+{
+    char buf[64];
+    int  i;
+    GetProfileString("AeldreC2", "Theme", "solarized", buf, sizeof(buf));
+    for (i = 0; i < THEME_COUNT; i++) {
+        if (lstrcmpi(buf, g_themes[i].name) == 0) {
+            g_theme_idx = i;
+            return;
+        }
+    }
+    g_theme_idx = 0;  /* fallback to solarized */
+}
+
+/* ------------------------------------------------------------------ */
+/* Sound events — fired outwith any painting or socket paths          */
+/*                                                                    */
+/* winmm.dll is loaded dynamically so Joshua links outwith it;       */
+/* on machines that lack a sound card the call fails silently outwith */
+/* affecting anything else.  MessageBeep is the fallback.            */
+/* ------------------------------------------------------------------ */
+#define SOUND_TANK_CONNECT    "SystemAsterisk"
+#define SOUND_TANK_DISCONNECT "SystemExclamation"
+#define SOUND_OP_JOIN         "SystemAsterisk"
+#define SOUND_OP_LEAVE        "SystemDefault"
+
+/* ------------------------------------------------------------------ */
+/* Easter egg — £ keypress during the startup splash                  */
+/*                                                                    */
+/* Plays the Windows NT 4.0 startup theme embedded as WAVE resource  */
+/* IDR_NT4_STARTUP (9001).  To activate: place nt4startup.wav in     */
+/* windows/ before building.  Works on any Windows version; it does  */
+/* not need to be NT 4.0.                                            */
+/* ------------------------------------------------------------------ */
+#define IDR_NT4_STARTUP 9001
+
+static void play_easter_egg(void)
+{
+    typedef BOOL (WINAPI *pfPlay)(LPCSTR, HMODULE, DWORD);
+    static pfPlay p_play  = NULL;
+    static int    checked = 0;
+    if (!checked) {
+        HMODULE h = LoadLibrary("winmm.dll");
+        if (h) p_play = (pfPlay)GetProcAddress(h, "PlaySoundA");
+        checked = 1;
+    }
+    if (!p_play) return;
+    p_play(NULL, NULL, SND_PURGE);   /* stop anything already playing */
+    p_play(MAKEINTRESOURCE(IDR_NT4_STARTUP), g_hinst,
+           SND_RESOURCE | SND_ASYNC | SND_NODEFAULT);
+}
+
+static void sound_event(const char *alias)
+{
+    typedef BOOL (WINAPI *pfPlay)(LPCSTR, HMODULE, DWORD);
+    static pfPlay p_play  = NULL;
+    static int    checked = 0;
+    if (!checked) {
+        HMODULE h = LoadLibrary("winmm.dll");
+        /* Keep the handle — outwith FreeLibrary so it stays loaded   */
+        if (h) p_play = (pfPlay)GetProcAddress(h, "PlaySoundA");
+        checked = 1;
+    }
+    if (p_play)
+        p_play(alias, NULL, SND_ALIAS | SND_ASYNC | SND_NODEFAULT);
+    else
+        MessageBeep(MB_ICONASTERISK);   /* fallback outwith winmm     */
+}
+
+static void spawn_dumont(const char *tsv_path)
+{
+    char             dumont[MAX_PATH], cmd[MAX_PATH * 2 + 16];
+    STARTUPINFO      si;
+    PROCESS_INFORMATION pi;
+    DWORD            n;
+
+    n = GetModuleFileName(NULL, dumont, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return;
+    { char *sl = strrchr(dumont, '\\'); if (sl) *(sl + 1) = '\0'; else dumont[0] = '\0'; }
+    lstrcat(dumont, "dumont.exe");
+
+    sprintf(cmd, "\"%s\" \"%s\"", dumont, tsv_path);
+    memset(&si, 0, sizeof(si)); si.cb = sizeof(si);
+    memset(&pi, 0, sizeof(pi));
+    if (CreateProcess(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Packet viewer                                                       */
+/* ------------------------------------------------------------------ */
+
+static void pkt_status_update(JoshSession *s)
+{
+    char buf[80];
+    HWND sw;
+    if (!s->pkt_hwnd) return;
+    sw = GetDlgItem(s->pkt_hwnd, IDC_PKT_STATUS);
+    if (!sw) return;
+    sprintf(buf, "  IN: %lu bytes    OUT: %lu bytes",
+            (unsigned long)s->pkt_in_bytes,
+            (unsigned long)s->pkt_out_bytes);
+    SetWindowText(sw, buf);
+}
+
+static void pkt_append(JoshSession *s, int dir, const char *data, int len)
+{
+    HWND   edit;
+    char   hdr[80], row[80];
+    char   hex[52], asc[17];
+    int    i, j;
+    DWORD  tick;
+
+    if (!s || !s->pkt_hwnd || len <= 0) return;
+    if (dir == PKT_IN) s->pkt_in_bytes  += (DWORD)len;
+    else               s->pkt_out_bytes += (DWORD)len;
+
+    edit = GetDlgItem(s->pkt_hwnd, IDC_PKT_OUT);
+    if (!edit) return;
+
+    tick = GetTickCount();
+    sprintf(hdr, "\r\n[%02lu:%02lu:%02lu.%03lu] %s  %d byte%s\r\n",
+            (unsigned long)((tick/3600000)%24),
+            (unsigned long)((tick/60000)%60),
+            (unsigned long)((tick/1000)%60),
+            (unsigned long)(tick%1000),
+            dir == PKT_IN ? "<< IN " : ">> OUT",
+            len, len == 1 ? "" : "s");
+
+    { int el = GetWindowTextLength(edit);
+      SendMessage(edit, EM_SETSEL, (WPARAM)el, (LPARAM)el);
+      SendMessage(edit, EM_REPLACESEL, 0, (LPARAM)hdr); }
+
+    for (i = 0; i < len; i += 16) {
+        int row_len = len - i; if (row_len > 16) row_len = 16;
+        int hpos = 0;
+        memset(asc, 0, sizeof(asc));
+        for (j = 0; j < 16; j++) {
+            if (j < row_len) {
+                unsigned char c = (unsigned char)data[i + j];
+                sprintf(hex + hpos, "%02x ", c);
+                asc[j] = (c >= 0x20 && c <= 0x7e) ? (char)c : '.';
+            } else {
+                strcpy(hex + hpos, "   ");
+                asc[j] = ' ';
+            }
+            hpos += 3;
+            if (j == 7) hex[hpos++] = ' ';
+        }
+        hex[hpos] = '\0'; asc[16] = '\0';
+        sprintf(row, "%04x  %s %s\r\n", i, hex, asc);
+        { int el = GetWindowTextLength(edit);
+          SendMessage(edit, EM_SETSEL, (WPARAM)el, (LPARAM)el);
+          SendMessage(edit, EM_REPLACESEL, 0, (LPARAM)row); }
+    }
+
+    pkt_status_update(s);
+}
+
+static LRESULT CALLBACK PktViewProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    JoshSession *s = (JoshSession *)GetWindowLong(hwnd, GWL_USERDATA);
+
+    switch (msg) {
+    case WM_CREATE: {
+        CREATESTRUCT    *cs = (CREATESTRUCT *)lp;
+        MDICREATESTRUCT *mc = (MDICREATESTRUCT *)cs->lpCreateParams;
+        RECT rc;
+        s = (JoshSession *)mc->lParam;
+        SetWindowLong(hwnd, GWL_USERDATA, (LONG)s);
+        GetClientRect(hwnd, &rc);
+        CreateWindow("EDIT", "",
+            WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_HSCROLL|
+            ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
+            0, 0, rc.right, rc.bottom - 20,
+            hwnd, (HMENU)IDC_PKT_OUT, g_hinst, NULL);
+        { HWND sw = CreateWindow("STATIC", "  IN: 0 bytes    OUT: 0 bytes",
+            WS_CHILD|WS_VISIBLE|SS_LEFT,
+            0, rc.bottom - 20, rc.right, 20,
+            hwnd, (HMENU)IDC_PKT_STATUS, g_hinst, NULL);
+          SendMessage(sw, WM_SETFONT,
+                      (WPARAM)GetStockObject(DEFAULT_GUI_FONT), FALSE); }
+        SendMessage(GetDlgItem(hwnd, IDC_PKT_OUT), WM_SETFONT,
+                    (WPARAM)GetStockObject(SYSTEM_FIXED_FONT), FALSE);
+        return 0;
+    }
+    case WM_SIZE: {
+        int w = (int)LOWORD(lp), h = (int)HIWORD(lp);
+        MoveWindow(GetDlgItem(hwnd, IDC_PKT_OUT),    0, 0,  w, h - 20, TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_PKT_STATUS), 0, h - 20, w, 20, TRUE);
+        return 0;
+    }
+    case WM_KEYDOWN:
+        /* Ctrl+L clears the log */
+        if (wp == 'L' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+            SetWindowText(GetDlgItem(hwnd, IDC_PKT_OUT), "");
+            if (s) { s->pkt_in_bytes = 0; s->pkt_out_bytes = 0; pkt_status_update(s); }
+            return 0;
+        }
+        break;
+    case WM_CLOSE:
+    case WM_DESTROY:
+        if (s) s->pkt_hwnd = NULL;
+        break;
+    }
+    return DefMDIChildProc(hwnd, msg, wp, lp);
+}
+
+/* ------------------------------------------------------------------ */
+/* Script engine                                                       */
+/* ------------------------------------------------------------------ */
+
+static void script_free(JoshSession *s)
+{
+    int i;
+    if (!s->script_cmds) return;
+    for (i = 0; i < s->script_count; i++) free(s->script_cmds[i]);
+    free(s->script_cmds);
+    s->script_cmds  = NULL;
+    s->script_count = 0;
+    s->script_idx   = 0;
+}
+
+static int script_load(JoshSession *s, const char *path)
+{
+    FILE  *f;
+    char   line[2048];
+    char **cmds = NULL;
+    int    count = 0, cap = 0;
+
+    script_free(s);
+    f = fopen(path, "r");
+    if (!f) return 0;
+
+    while (fgets(line, sizeof(line), f)) {
+        int   len;
+        char *p = line, **t;
+        /* Skip comments and blank lines                               */
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '#' || *p == '\r' || *p == '\n' || *p == '\0') continue;
+        len = (int)strlen(p);
+        while (len > 0 && (p[len-1] == '\r' || p[len-1] == '\n' ||
+                            p[len-1] == ' '  || p[len-1] == '\t'))
+            p[--len] = '\0';
+        if (len == 0) continue;
+
+        if (count >= cap) {
+            int nc = cap ? cap * 2 : 16;
+            t = (char **)realloc(cmds, (size_t)nc * sizeof(char *));
+            if (!t) break;
+            cmds = t; cap = nc;
+        }
+        cmds[count] = (char *)malloc((size_t)len + 1);
+        if (!cmds[count]) break;
+        memcpy(cmds[count], p, (size_t)len + 1);
+        count++;
+    }
+    fclose(f);
+
+    if (count == 0) { free(cmds); return 0; }
+    s->script_cmds  = cmds;
+    s->script_count = count;
+    s->script_idx   = 0;
+    return count;
+}
+
+/* Advance to next script command — called from the <<<DONE>>> handler */
+static void script_advance(JoshSession *s)
+{
+    if (!s->script_cmds) return;
+
+    if (s->script_idx < s->script_count) {
+        /* Send the next command; suppress the separator for mid-run  */
+        session_send_cmd(s, s->script_cmds[s->script_idx++]);
+    } else {
+        /* All done                                                    */
+        char msg[64];
+        sprintf(msg, "[Script complete — %d commands]\r\n", s->script_count);
+        session_append(s, msg);
+        session_append(s, "\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\r\n");
+        script_free(s);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Macro recording                                                     */
+/* ------------------------------------------------------------------ */
+
+static void macro_free(JoshSession *s)
+{
+    int i;
+    if (!s->macro_cmds) return;
+    for (i = 0; i < s->macro_count; i++) free(s->macro_cmds[i]);
+    free(s->macro_cmds);
+    s->macro_cmds  = NULL;
+    s->macro_count = 0;
+    s->macro_cap   = 0;
+}
+
+static void macro_record_cmd(JoshSession *s, const char *cmd)
+{
+    char **t;
+    int    len;
+    if (!s->macro_rec) return;
+    if (s->macro_count >= s->macro_cap) {
+        int nc = s->macro_cap ? s->macro_cap * 2 : 16;
+        t = (char **)realloc(s->macro_cmds, (size_t)nc * sizeof(char *));
+        if (!t) return;
+        s->macro_cmds = t; s->macro_cap = nc;
+    }
+    len = lstrlen(cmd);
+    s->macro_cmds[s->macro_count] = (char *)malloc((size_t)len + 1);
+    if (!s->macro_cmds[s->macro_count]) return;
+    memcpy(s->macro_cmds[s->macro_count], cmd, (size_t)len + 1);
+    s->macro_count++;
+}
+
+static int macro_save(JoshSession *s, const char *path)
+{
+    FILE *f; int i;
+    if (!s->macro_cmds || s->macro_count == 0) return 0;
+    f = fopen(path, "w");
+    if (!f) return 0;
+    fprintf(f, "# AeldreC2 macro  —  %d commands\n", s->macro_count);
+    for (i = 0; i < s->macro_count; i++)
+        fprintf(f, "%s\n", s->macro_cmds[i]);
+    fclose(f);
+    return 1;
+}
+
+static void macro_play(JoshSession *s)
+{
+    /* Convert macro_cmds into the script engine then fire              */
+    int    i;
+    char **cmds;
+
+    if (!s->macro_cmds || s->macro_count == 0) return;
+    script_free(s);
+    cmds = (char **)malloc((size_t)s->macro_count * sizeof(char *));
+    if (!cmds) return;
+    for (i = 0; i < s->macro_count; i++) {
+        int len = lstrlen(s->macro_cmds[i]);
+        cmds[i] = (char *)malloc((size_t)len + 1);
+        if (cmds[i]) memcpy(cmds[i], s->macro_cmds[i], (size_t)len + 1);
+    }
+    s->script_cmds  = cmds;
+    s->script_count = s->macro_count;
+    s->script_idx   = 0;
+    /* Fire the first command immediately                               */
+    if (s->state == NS_CONNECTED && !s->cmd_busy)
+        session_send_cmd(s, s->script_cmds[s->script_idx++]);
+}
+
+/* Save-dialog helper for macros                                       */
+static int macro_browse_save(char *out, int outsz)
+{
+    OPENFILENAME ofn;
+    memset(&ofn, 0, sizeof(ofn));
+    out[0] = '\0';
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner   = g_frame;
+    ofn.lpstrFilter = "Macro files (*.mac)\0*.mac\0Script files (*.txt)\0*.txt\0All files\0*.*\0\0";
+    ofn.lpstrFile   = out;
+    ofn.nMaxFile    = (DWORD)outsz;
+    ofn.lpstrTitle  = "Save Macro";
+    ofn.Flags       = OFN_OVERWRITEPROMPT;
+    return GetSaveFileName(&ofn);
+}
 
 static void log_open(void)
 {
@@ -591,8 +1077,29 @@ static void session_process_data(JoshSession *s, const char *buf, int len)
         if (strcmp(s->accum, "<<<DONE>>>\n") == 0) {
             s->cmd_busy    = 0;
             s->pager_active = 0;
-            session_append(s, "\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\r\n");
-            session_set_title(s);
+            /* Scan complete: close TSV, launch Dumont                */
+            if (s->scan_active) {
+                char info[MAX_PATH + 64];
+                if (s->scan_tsv != INVALID_HANDLE_VALUE) {
+                    CloseHandle(s->scan_tsv);
+                    s->scan_tsv = INVALID_HANDLE_VALUE;
+                }
+                s->scan_active = 0;
+                sprintf(info, "[Scan complete — opening Dumont: %s]\r\n",
+                        s->scan_tsv_path);
+                session_append(s, info);
+                spawn_dumont(s->scan_tsv_path);
+            }
+            /* Script running: advance to next command instead of     */
+            /* showing the separator (script_advance handles its own  */
+            /* separator on completion).                               */
+            if (s->script_cmds) {
+                session_set_title(s);
+                script_advance(s);
+            } else {
+                session_append(s, "\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\r\n");
+                session_set_title(s);
+            }
         }
         /* <<<PAGE>>> — pager prompt */
         else if (strcmp(s->accum, "<<<PAGE>>>\n") == 0) {
@@ -647,7 +1154,8 @@ static void session_process_data(JoshSession *s, const char *buf, int len)
                   sprintf(nb, "Host: %s\nOS:  %s",
                           s->tank_host[0] ? s->tank_host : "unknown",
                           s->tank_os);
-                  show_notification("\xd7  Tank programme connected", nb); }
+                  show_notification("\xd7  Tank programme connected", nb);
+                  sound_event(SOUND_TANK_CONNECT); }
                 sprintf(info, "[TANK] %s connected  OS: %s  shell: %s\r\n",
                         s->tank_host[0] ? s->tank_host : "unknown",
                         s->tank_os, s->tank_shell);
@@ -703,7 +1211,8 @@ static void session_process_data(JoshSession *s, const char *buf, int len)
                   sprintf(nb, "Operator: %s  (%s)",
                           s->op_handle,
                           s->is_op == IS_OP_LIGHTMAN ? "Lightman" : "Flynn");
-                  show_notification("\xa7  Operator connected", nb); }
+                  show_notification("\xa7  Operator connected", nb);
+                  sound_event(SOUND_OP_JOIN); }
                 /* Broadcast connect + greeting quote */
                 sprintf(info, "[OP] %s connected (%s)%s\r\n",
                         s->op_handle,
@@ -753,6 +1262,11 @@ static void session_process_data(JoshSession *s, const char *buf, int len)
         }
         /* Plain text output (from tanks) */
         else {
+            /* If a scan is in flight, mirror TSV lines to the temp file */
+            if (s->scan_active && s->scan_tsv != INVALID_HANDLE_VALUE) {
+                DWORD written;
+                WriteFile(s->scan_tsv, s->accum, (DWORD)s->accum_len, &written, NULL);
+            }
             session_append(s, s->accum);
         }
         s->accum_len = 0;
@@ -769,11 +1283,13 @@ static void session_close(JoshSession *s)
         log_append(info);
         sprintf(nb, "Operator %s disconnected", s->op_handle);
         show_notification("\xa7  Operator left", nb);
+        sound_event(SOUND_OP_LEAVE);
     }
     if (s->is_tank && s->tank_host[0]) {
         char nb[128];
         sprintf(nb, "Tank from %s disconnected", s->tank_host);
         show_notification("\xd7  Tank programme lost", nb);
+        sound_event(SOUND_TANK_DISCONNECT);
     }
     if (s->dns_task) { WSACancelAsyncRequest(s->dns_task); s->dns_task = NULL; }
     if (s->sock != INVALID_SOCKET) {
@@ -794,7 +1310,21 @@ static void session_close(JoshSession *s)
         CloseHandle(s->file_recv_hfile);
         s->file_recv_hfile = INVALID_HANDLE_VALUE;
     }
-    s->recv_mode  = RECV_TEXT;
+    if (s->scan_tsv != INVALID_HANDLE_VALUE) {
+        CloseHandle(s->scan_tsv);
+        s->scan_tsv = INVALID_HANDLE_VALUE;
+    }
+    s->scan_active = 0;
+    if (s->pkt_hwnd) {
+        DestroyWindow(s->pkt_hwnd);
+        s->pkt_hwnd = NULL;
+    }
+    s->recv_mode   = RECV_TEXT;
+    script_free(s);
+    if (s->macro_rec) {
+        s->macro_rec = 0;
+        macro_free(s);
+    }
     s->put_pending = 0;
     s->state = NS_IDLE;
     session_set_title(s);
@@ -969,7 +1499,10 @@ static void tls_decrypt_recv(JoshSession *s, const char *buf, int len)
                 plain_len+=(int)bufs[i].cbBuffer;
             }
         }
-        if (plain_len>0) session_process_data(s, plain, plain_len);
+        if (plain_len>0) {
+            if (s->is_tank) pkt_append(s, PKT_IN, plain, plain_len);
+            session_process_data(s, plain, plain_len);
+        }
         s->tls_ibuf_len=0;
         for (i=0;i<4;i++) {
             if (bufs[i].BufferType==NC_SECBUFFER_EXTRA && bufs[i].cbBuffer>0) {
@@ -1053,14 +1586,16 @@ static LRESULT CALLBACK NotifProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
         GetClientRect(hwnd, &rc);
 
-        /* Solarized-dark background */
-        bg = CreateSolidBrush(RGB(0, 43, 54));
+        /* Theme background */
+        bg = CreateSolidBrush(g_themes[g_theme_idx].bg);
         FillRect(dc, &rc, bg);
         DeleteObject(bg);
 
-        /* Green top accent strip */
-        { RECT strip = { 0, 0, rc.right, 3 };
-          HBRUSH sb = CreateSolidBrush(RGB(133, 153, 0));
+        /* Theme accent strip */
+        { RECT strip;
+          HBRUSH sb;
+          SetRect(&strip, 0, 0, rc.right, 3);
+          sb = CreateSolidBrush(g_themes[g_theme_idx].strip);
           FillRect(dc, &strip, sb);
           DeleteObject(sb); }
 
@@ -1069,7 +1604,7 @@ static LRESULT CALLBACK NotifProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         /* Title line */
         hfb = make_font("Arial", 9, 1, 0);
         hfo = (HFONT)SelectObject(dc, hfb);
-        SetTextColor(dc, RGB(133, 153, 0));   /* solarized green */
+        SetTextColor(dc, g_themes[g_theme_idx].title);
         tr.left = 10; tr.top = 7; tr.right = rc.right - 6; tr.bottom = 26;
         if (nd) DrawText(dc, nd->title, -1, &tr, DT_LEFT | DT_NOPREFIX | DT_SINGLELINE);
         SelectObject(dc, hfo);
@@ -1078,7 +1613,7 @@ static LRESULT CALLBACK NotifProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         /* Body line */
         hfn = make_font("Arial", 8, 0, 0);
         SelectObject(dc, hfn);
-        SetTextColor(dc, RGB(131, 148, 150));  /* solarized base0 */
+        SetTextColor(dc, g_themes[g_theme_idx].body);
         tr.top = 28; tr.bottom = rc.bottom - 6;
         if (nd) DrawText(dc, nd->body, -1, &tr, DT_LEFT | DT_NOPREFIX | DT_WORDBREAK);
         SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
@@ -1271,6 +1806,9 @@ static void show_startup_config(void)
 
     while (g_sc_dlg) {
         if (!GetMessage(&msg, NULL, 0, 0)) break;
+        /* Easter egg: £ (0xA3) during splash plays the NT4 startup theme */
+        if (msg.message == WM_CHAR && msg.wParam == 0xA3)
+            play_easter_egg();
         if (!IsDialogMessage(g_sc_dlg, &msg)) {
             TranslateMessage(&msg); DispatchMessage(&msg);
         }
@@ -1505,17 +2043,87 @@ static void run_op_command(JoshSession *caller, int is_console_cmd,
         operator_broadcast(emote);
         log_append(emote);
 
+    } else if (strncmp(line, "/script ", 8) == 0) {
+        /* /script <path>  — run a script file on the active tank     */
+        const char *path = line + 8;
+        int i; JoshSession *tank = NULL;
+        for (i = 0; i < MAX_SESSIONS; i++) {
+            if (g_sess[i] && g_sess[i]->is_tank &&
+                g_sess[i]->state == NS_CONNECTED && !g_sess[i]->cmd_busy) {
+                tank = g_sess[i]; break;
+            }
+        }
+        if (!tank) {
+            const char *err = "script: no idle connected tank found\r\n";
+            if (caller) op_send(caller, err); else log_append(err);
+        } else {
+            int n = script_load(tank, path);
+            if (n <= 0) {
+                char err[MAX_PATH + 32];
+                sprintf(err, "script: cannot load '%s'\r\n", path);
+                if (caller) op_send(caller, err); else log_append(err);
+            } else {
+                char info[MAX_PATH + 64];
+                sprintf(info, "[Script: %d commands from %s]\r\n", n, path);
+                if (caller) op_send(caller, info);
+                log_append(info);
+                session_send_cmd(tank, tank->script_cmds[tank->script_idx++]);
+            }
+        }
+
+    } else if (strncmp(line, "/scansubnet ", 12) == 0) {
+        /* /scansubnet <cidr> [-p ports] — run scan on active tank    */
+        const char *scan_args = line + 12;
+        int   i;
+        JoshSession *tank = NULL;
+        /* Find the active MDI child's session if it's a tank         */
+        for (i = 0; i < MAX_SESSIONS; i++) {
+            if (g_sess[i] && g_sess[i]->is_tank &&
+                g_sess[i]->state == NS_CONNECTED && !g_sess[i]->cmd_busy) {
+                tank = g_sess[i]; break;
+            }
+        }
+        if (!tank) {
+            const char *err = "scansubnet: no idle connected tank found\r\n";
+            if (caller) op_send(caller, err); else log_append(err);
+        } else {
+            char tmpdir[MAX_PATH], cmd[512], info[128];
+            /* Open a temp TSV file for this scan                     */
+            GetTempPath(MAX_PATH, tmpdir);
+            if (!tmpdir[0]) lstrcpy(tmpdir, "C:\\TEMP\\");
+            sprintf(tank->scan_tsv_path, "%sscan_%lu.tsv", tmpdir,
+                    (unsigned long)GetTickCount());
+            tank->scan_tsv = CreateFile(tank->scan_tsv_path, GENERIC_WRITE, 0,
+                NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (tank->scan_tsv == INVALID_HANDLE_VALUE) {
+                const char *err = "scansubnet: cannot create temp TSV file\r\n";
+                if (caller) op_send(caller, err); else log_append(err);
+            } else {
+                tank->scan_active = 1;
+                tank->cmd_busy    = 1;
+                sprintf(cmd, "scan %s\r\n", scan_args);
+                session_send_cmd(tank, cmd);
+                sprintf(info, "[Scanning %s via tank %s]\r\n",
+                        scan_args,
+                        tank->tank_host[0] ? tank->tank_host : "?");
+                if (caller) op_send(caller, info);
+                log_append(info);
+            }
+        }
+
     } else if (strcmp(line, "/help") == 0 || strcmp(line, "/?") == 0) {
         const char *help =
             "Console commands:\r\n"
             "  /ops               List connected operators\r\n"
             "  /tanks             List connected tanks\r\n"
+            "  /scansubnet <cidr> [-p ports]  Scan via active tank -> Dumont\r\n"
+            "  /script <file>     Run a script file on the active tank\r\n"
             "  /givemod <handle>  Give operator moderator status\r\n"
             "  /removemod <h>     Remove moderator status\r\n"
             "  /kick <handle>     Disconnect an operator\r\n"
             "  /key               Display the current server key\r\n"
             "  /regenkey          Regenerate server key (console only)\r\n"
-            "  /emote <text>       Action message  (* Handle text)\r\n"
+            "  /emote <text>      Action message  (* Handle text)\r\n"
             "  /help  /?          This help\r\n"
             "Plain text: broadcast as [SERVER] announcement to all operators.\r\n";
         if (caller) op_send(caller, help);
@@ -1589,9 +2197,10 @@ static void handle_socket_event(SOCKET sock, int event, int err)
             s->tls_ibuf_len += n;
             tls_handshake_feed(s);
         } else if (s->state == NS_CONNECTED && s->tls) {
-            tls_decrypt_recv(s, buf, n);
+            tls_decrypt_recv(s, buf, n);   /* pkt_append called inside */
         } else if (s->state == NS_CONNECTED ||
                    s->state == NS_OP_AWAIT_HANDLE) {
+            if (s->is_tank) pkt_append(s, PKT_IN, buf, n);
             session_process_data(s, buf, n);
         }
         break;
@@ -1649,6 +2258,8 @@ static void session_send_cmd(JoshSession *s, const char *cmd)
     buf[len + 2] = '\0';
     len += 2;
 
+    pkt_append(s, PKT_OUT, buf, len);
+
     if (s->tls && g_tls_avail)
         tls_encrypt_send(s, buf, len);
     else
@@ -1688,6 +2299,7 @@ static void session_send(JoshSession *s)
         return;
     }
 
+    if (s->macro_rec) macro_record_cmd(s, buf);
     session_send_cmd(s, buf);
 }
 
@@ -1897,6 +2509,8 @@ static void new_session(const char *host, int port, int tls_flag, int listen_mod
     s->sock            = INVALID_SOCKET;
     s->listen_sock     = INVALID_SOCKET;
     s->file_recv_hfile = INVALID_HANDLE_VALUE;
+    s->scan_tsv        = INVALID_HANDLE_VALUE;
+    s->pkt_hwnd        = NULL;
     s->recv_mode       = RECV_TEXT;
     s->tls             = tls_flag && g_tls_avail;
     s->port            = port;
@@ -1965,12 +2579,12 @@ static const char *k_tab_cmds[] = {
     "smb", "smb shares", "smb view", "smb users", "smb groups",
     "smb admins", "smb acl ", "smb stat ", "smb sessions",
     "rdp", "rdp sessions", "rdp logoff ",
-    "cwd", "pwd", "cd ", "cat ", "less ", "persist", "persist remove",
+    "scan ", "cwd", "pwd", "cd ", "cat ", "less ", "persist", "persist remove",
     "shell",
     "exit", "quit",
     /* Console /commands */
     "/help", "/key", "/regenkey", "/ops", "/tanks",
-    "/givemod ", "/removemod ", "/kick ", "/emote ",
+    "/scansubnet ", "/script ", "/givemod ", "/removemod ", "/kick ", "/emote ",
     NULL
 };
 
@@ -2108,11 +2722,13 @@ static JoshSession *active_session(void)
 
 static HMENU build_menu(void)
 {
-    HMENU bar  = CreateMenu();
-    HMENU file = CreatePopupMenu();
-    HMENU tank = CreatePopupMenu();
-    HMENU win  = CreatePopupMenu();
-    HMENU help = CreatePopupMenu();
+    HMENU bar   = CreateMenu();
+    HMENU file  = CreatePopupMenu();
+    HMENU tank  = CreatePopupMenu();
+    HMENU win   = CreatePopupMenu();
+    HMENU view  = CreatePopupMenu();
+    HMENU help  = CreatePopupMenu();
+    int i;
 
     AppendMenu(file, MF_STRING,    IDM_FILE_NEW,        "&New Session\tCtrl+N");
     AppendMenu(file, MF_STRING,    IDM_FILE_DISCONNECT, "&Disconnect");
@@ -2126,10 +2742,17 @@ static HMENU build_menu(void)
     AppendMenu(tank, MF_STRING, IDM_TANK_PUT,        "&Put File...");
     AppendMenu(tank, MF_STRING, IDM_TANK_SCREENSHOT, "&Screenshot");
     AppendMenu(tank, MF_STRING, IDM_TANK_REGQ,       "&Registry Query...");
+    AppendMenu(tank, MF_STRING, IDM_TANK_SCAN,       "Subnet &Scan...");
     AppendMenu(tank, MF_SEPARATOR, 0, NULL);
     AppendMenu(tank, MF_STRING, IDM_TANK_PORTFWD,    "&Port Forward...");
     AppendMenu(tank, MF_STRING, IDM_TANK_SOCKS4,     "&SOCKS4 Proxy...");
     AppendMenu(tank, MF_STRING, IDM_TANK_RELAYSTOP,  "Stop &Relays");
+    AppendMenu(tank, MF_STRING, IDM_TANK_PKTVIEW,    "&Packet View");
+    AppendMenu(tank, MF_SEPARATOR, 0, NULL);
+    AppendMenu(tank, MF_STRING, IDM_TANK_SCRIPT_RUN, "Run &Script...");
+    AppendMenu(tank, MF_STRING, IDM_TANK_MACRO_REC,  "&Record Macro");
+    AppendMenu(tank, MF_STRING|MF_GRAYED, IDM_TANK_MACRO_SAVE, "&Save Macro...");
+    AppendMenu(tank, MF_STRING, IDM_TANK_MACRO_PLAY, "&Play Macro...");
 
     AppendMenu(win,  MF_STRING,    IDM_WIN_TILE_H,   "Tile &Horizontal");
     AppendMenu(win,  MF_STRING,    IDM_WIN_TILE_V,   "Tile &Vertical");
@@ -2139,9 +2762,18 @@ static HMENU build_menu(void)
 
     AppendMenu(help, MF_STRING, IDM_HELP_ABOUT, "&About");
 
+    g_theme_menu = CreatePopupMenu();
+    for (i = 0; i < THEME_COUNT; i++)
+        AppendMenu(g_theme_menu, MF_STRING, IDM_VIEW_THEME_BASE + i,
+                   g_themes[i].label);
+    CheckMenuItem(g_theme_menu, (UINT)g_theme_idx,
+                  MF_BYPOSITION | MF_CHECKED);
+    AppendMenu(view, MF_POPUP, (UINT)g_theme_menu, "&Theme");
+
     AppendMenu(bar, MF_POPUP, (UINT)file, "&File");
     AppendMenu(bar, MF_POPUP, (UINT)tank, "&Tank");
     AppendMenu(bar, MF_POPUP, (UINT)win,  "&Window");
+    AppendMenu(bar, MF_POPUP, (UINT)view, "&View");
     AppendMenu(bar, MF_POPUP, (UINT)help, "&Help");
     return bar;
 }
@@ -2177,6 +2809,8 @@ static LRESULT CALLBACK FrameProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 cs->sock            = INVALID_SOCKET;
                 cs->listen_sock     = INVALID_SOCKET;
                 cs->file_recv_hfile = INVALID_HANDLE_VALUE;
+                cs->scan_tsv        = INVALID_HANDLE_VALUE;
+                cs->pkt_hwnd        = NULL;
                 cs->recv_mode       = RECV_TEXT;
                 cs->is_console      = 1;
                 cs->state           = NS_CONNECTED;
@@ -2357,6 +2991,138 @@ static LRESULT CALLBACK FrameProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (s) session_send_cmd(s, "screenshot");
             return 0;
         }
+        case IDM_TANK_PKTVIEW: {
+            JoshSession *s = active_session();
+            if (s && s->is_tank) {
+                if (s->pkt_hwnd) {
+                    /* Already open — bring to front                  */
+                    union { HWND h; WPARAM w; } u; u.h = s->pkt_hwnd;
+                    SendMessage(g_mdi, WM_MDIACTIVATE, u.w, 0);
+                } else {
+                    MDICREATESTRUCT mcs;
+                    char title[MAX_PATH + 20];
+                    sprintf(title, "Packets: %s",
+                            s->tank_host[0] ? s->tank_host : "?");
+                    memset(&mcs, 0, sizeof(mcs));
+                    mcs.szClass = WC_PKTVIEW;
+                    mcs.szTitle = title;
+                    mcs.hOwner  = g_hinst;
+                    mcs.x = mcs.y = CW_USEDEFAULT;
+                    mcs.cx = 660; mcs.cy = 420;
+                    mcs.style  = WS_VISIBLE;
+                    mcs.lParam = (LPARAM)s;
+                    s->pkt_hwnd = (HWND)SendMessage(g_mdi, WM_MDICREATE,
+                                                    0, (LPARAM)&mcs);
+                }
+            }
+            return 0;
+        }
+        case IDM_TANK_SCRIPT_RUN: {
+            JoshSession *s = active_session();
+            if (s && s->is_tank && !s->cmd_busy) {
+                OPENFILENAME ofn; char path[MAX_PATH] = "";
+                memset(&ofn,0,sizeof(ofn));
+                ofn.lStructSize=sizeof(ofn); ofn.hwndOwner=hwnd;
+                ofn.lpstrFilter="Script files (*.mac;*.txt)\0*.mac;*.txt\0All files\0*.*\0\0";
+                ofn.lpstrFile=path; ofn.nMaxFile=MAX_PATH;
+                ofn.lpstrTitle="Run Script on Tank";
+                ofn.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST;
+                if (GetOpenFileName(&ofn)) {
+                    int n = script_load(s, path);
+                    if (n > 0) {
+                        char info[MAX_PATH+64];
+                        sprintf(info,"[Script: %d commands from %s]\r\n",n,path);
+                        session_append(s, info);
+                        session_send_cmd(s, s->script_cmds[s->script_idx++]);
+                    } else {
+                        MessageBox(hwnd,"Cannot load script file.","Script",MB_OK|MB_ICONEXCLAMATION);
+                    }
+                }
+            }
+            return 0;
+        }
+        case IDM_TANK_MACRO_REC: {
+            JoshSession *s = active_session();
+            if (s && s->is_tank) {
+                HMENU hm = GetSubMenu(GetMenu(hwnd), 1);
+                if (!s->macro_rec) {
+                    /* Start recording — clear any previous take      */
+                    macro_free(s);
+                    s->macro_rec = 1;
+                    session_append(s, "[Macro recording started]\r\n");
+                    CheckMenuItem(hm, IDM_TANK_MACRO_REC, MF_BYCOMMAND|MF_CHECKED);
+                    EnableMenuItem(hm, IDM_TANK_MACRO_SAVE, MF_BYCOMMAND|MF_GRAYED);
+                } else {
+                    /* Stop recording                                  */
+                    s->macro_rec = 0;
+                    { char msg[64]; sprintf(msg,"[Macro stopped — %d commands recorded]\r\n",s->macro_count);
+                      session_append(s,msg); }
+                    CheckMenuItem(hm, IDM_TANK_MACRO_REC, MF_BYCOMMAND|MF_UNCHECKED);
+                    if (s->macro_count > 0)
+                        EnableMenuItem(hm, IDM_TANK_MACRO_SAVE, MF_BYCOMMAND|MF_ENABLED);
+                }
+            }
+            return 0;
+        }
+        case IDM_TANK_MACRO_SAVE: {
+            JoshSession *s = active_session();
+            if (s && s->macro_cmds && s->macro_count > 0) {
+                char path[MAX_PATH] = "macro.mac";
+                if (macro_browse_save(path, MAX_PATH)) {
+                    if (macro_save(s, path)) {
+                        char msg[MAX_PATH+32];
+                        sprintf(msg,"[Macro saved to %s]\r\n",path);
+                        session_append(s,msg);
+                    } else {
+                        MessageBox(hwnd,"Could not save macro.","Save Macro",MB_OK|MB_ICONEXCLAMATION);
+                    }
+                }
+            }
+            return 0;
+        }
+        case IDM_TANK_MACRO_PLAY: {
+            JoshSession *s = active_session();
+            if (s && s->is_tank && !s->cmd_busy) {
+                if (s->macro_cmds && s->macro_count > 0) {
+                    char msg[64];
+                    sprintf(msg,"[Playing macro — %d commands]\r\n",s->macro_count);
+                    session_append(s,msg);
+                    macro_play(s);
+                } else {
+                    /* No in-memory macro: offer to load from file     */
+                    OPENFILENAME ofn; char path[MAX_PATH] = "";
+                    memset(&ofn,0,sizeof(ofn));
+                    ofn.lStructSize=sizeof(ofn); ofn.hwndOwner=hwnd;
+                    ofn.lpstrFilter="Macro files (*.mac;*.txt)\0*.mac;*.txt\0All files\0*.*\0\0";
+                    ofn.lpstrFile=path; ofn.nMaxFile=MAX_PATH;
+                    ofn.lpstrTitle="Load and Play Macro";
+                    ofn.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST;
+                    if (GetOpenFileName(&ofn)) {
+                        int n = script_load(s, path);
+                        if (n > 0) {
+                            char info[MAX_PATH+64];
+                            sprintf(info,"[Macro: %d commands from %s]\r\n",n,path);
+                            session_append(s,info);
+                            session_send_cmd(s,s->script_cmds[s->script_idx++]);
+                        }
+                    }
+                }
+            }
+            return 0;
+        }
+        case IDM_TANK_SCAN: {
+            JoshSession *s = active_session();
+            if (s && s->is_tank && !s->cmd_busy) {
+                if (show_input_box("Target  (e.g. 192.168.1.0/24)\nOptional: append  -p ports  -b",
+                                   "Subnet Scan")) {
+                    /* Reuse /scansubnet logic via a synthetic line   */
+                    char synth[ACCUM_SZ];
+                    sprintf(synth, "/scansubnet %s", g_inp_buf);
+                    local_console_cmd(synth);
+                }
+            }
+            return 0;
+        }
         case IDM_TANK_PORTFWD: {
             JoshSession *s = active_session();
             if (s && s->state == NS_CONNECTED) {
@@ -2417,6 +3183,15 @@ static LRESULT CALLBACK FrameProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 "AeldreC2 - Retro C2 for the masses.",
                 "About Joshua", MB_OK|MB_ICONINFORMATION);
             return 0;
+        default: {
+            UINT id = LOWORD(wp);
+            if (id >= (UINT)IDM_VIEW_THEME_BASE &&
+                id <  (UINT)(IDM_VIEW_THEME_BASE + THEME_COUNT)) {
+                theme_set((int)(id - IDM_VIEW_THEME_BASE));
+                return 0;
+            }
+            break;
+        }
         }
         break;
 
@@ -2459,6 +3234,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
 
     log_open();
     gen_server_key();
+    theme_load();
 
     if (WSAStartup(MAKEWORD(1,1), &wsd) != 0) {
         MessageBox(NULL,"WSAStartup failed.","Joshua",MB_OK|MB_ICONSTOP);
@@ -2507,6 +3283,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
         wc.hCursor=LoadCursor(NULL,IDC_ARROW);
         wc.hbrBackground=(HBRUSH)(COLOR_BTNFACE+1);
         wc.lpszClassName="JoshuaStartupCfg";
+        RegisterClass(&wc);
+
+        memset(&wc,0,sizeof(wc));
+        wc.lpfnWndProc=PktViewProc; wc.hInstance=hInst;
+        wc.hCursor=LoadCursor(NULL,IDC_ARROW);
+        wc.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);
+        wc.lpszClassName=WC_PKTVIEW;
         RegisterClass(&wc);
     }
 

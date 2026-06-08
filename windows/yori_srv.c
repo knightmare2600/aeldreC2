@@ -34,8 +34,10 @@
  * Receiver applies XOR against its own previous frame to reconstruct.
  */
 
-#if defined(__WINDOWS__) && !defined(WIN32)
-#  define YORI_WIN16
+#ifndef YORI_WIN16
+#  if defined(__WINDOWS__) && !defined(WIN32)
+#    define YORI_WIN16
+#  endif
 #endif
 
 #ifdef YORI_WIN16
@@ -47,6 +49,15 @@
 #  ifndef MAKEWORD
 #    define MAKEWORD(a,b) ((WORD)(((BYTE)(a))|(((WORD)((BYTE)(b)))<<8)))
 #  endif
+#  ifndef SHORT
+#    define SHORT short
+#  endif
+#  ifndef WM_APP
+#    define WM_APP 0x8000
+#  endif
+   /* mouse_event / keybd_event prototypes absent from some Win16 headers */
+   void WINAPI mouse_event(DWORD, DWORD, DWORD, DWORD, DWORD);
+   void WINAPI keybd_event(BYTE, BYTE, DWORD, DWORD);
    /* Win16 does not have MOUSEEVENTF_* in older headers */
 #  ifndef MOUSEEVENTF_MOVE
 #    define MOUSEEVENTF_MOVE      0x0001

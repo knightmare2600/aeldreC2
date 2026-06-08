@@ -134,6 +134,9 @@ typedef struct {
 static PreviewLine g_plines[MAX_PLINES];
 static int         g_nplines = 0;
 
+/* Forward declaration */
+static void preview_refresh(int reset_scroll);
+
 /* ------------------------------------------------------------------ */
 /* Font helpers                                                         */
 /* ------------------------------------------------------------------ */

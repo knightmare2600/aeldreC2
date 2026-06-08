@@ -19,6 +19,10 @@ RC       = i686-w64-mingw32-windres
 TOOLPATH =
 RCPATH   = $(TOOLPATH)$(RC)
 
+# Icon converter: python3 + Pillow, already in the Docker image.
+# Paths are relative to windows/ (the Makefile's working directory).
+ICON_CONV = python3 ../icons/win16ico.py
+
 !ifdef __UNIX__
 RM = rm -f
 !else
@@ -423,14 +427,15 @@ OBJ_ROOTSHARED = &
 # Default target
 # =================================================================
 
-all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe ncnt.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe yori16.exe yori32.exe yoriview.exe setup16.exe .SYMBOLIC
+all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe ncnt.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe setup16.exe .SYMBOLIC
 
 win32s: pageant.exe putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe ipcalc16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe setup16.exe setup32.exe .SYMBOLIC
 
-dist: win32s .SYMBOLIC
+dist: all .SYMBOLIC
 	sh -c "mkdir -p ../output/compiled ../output/exe"
 	python3 ../tools/mksetup.py --out16 output/exe/setup16.exe --out32 output/exe/setup32.exe
-	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe yori16.exe yori32.exe yoriview.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
+	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
+	sh -c "cd ../output && zip -9 -j aeldrec2-tools.zip compiled/*.exe compiled/*.dll exe/setup16.exe exe/setup32.exe && echo 'Created: output/aeldrec2-tools.zip'"
 
 # =================================================================
 # be_list.c — per-target compilation with different defines
@@ -800,12 +805,9 @@ grid.exe: grid.obj grid.res
 	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) grid.obj wsock32.lib comdlg32.lib
 	wrc grid.res $@
 
-# gridcli.exe -- console-subsystem port scanner for command.com
+# gridcli.exe -- console port scanner (.exe rule with icon is in NT-tools section)
 gridcli.obj: gridcli.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c gridcli.c
-
-gridcli.exe: gridcli.obj
-	$(CC) -bt=nt -l=nt -fe=$@ $(LDFLAGS) gridcli.obj wsock32.lib
 
 # =================================================================
 # ipcalc32.exe -- Win32s/Win32 IP subnet calculator (GUI, no sockets)
@@ -1734,54 +1736,27 @@ wu_wmemchr.obj: utils/wmemchr.c
 
 CTOOL_CC = $(CC) -bt=nt -l=nt -za99 -ox -D_WIN32
 
-# ncnt.exe -- Weld Pond-tribute netcat for NT
+# NT toolkit tools — compile rules (.exe rules with icons are below)
 ncnt.obj: ncnt.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c ncnt.c
 
-ncnt.exe: ncnt.obj
-	$(CTOOL_CC) -fe=$@ ncnt.obj wsock32.lib
-
-# svcany.exe -- NT service installer
 svcany.obj: svcany.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c svcany.c
 
-svcany.exe: svcany.obj
-	$(CTOOL_CC) -fe=$@ svcany.obj advapi32.lib
-
-# regcli.exe -- CLI registry tool for NT 3.x/4.x
 regcli.obj: regcli.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c regcli.c
 
-regcli.exe: regcli.obj
-	$(CTOOL_CC) -fe=$@ regcli.obj advapi32.lib
-
-# whoami.exe -- whoami for NT 3.x (missing before XP)
 whoami.obj: whoami.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c whoami.c
 
-whoami.exe: whoami.obj
-	$(CTOOL_CC) -fe=$@ whoami.obj advapi32.lib netapi32.lib
-
-# arp.exe -- ARP table viewer + ping sweep
 arp.obj: arp.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c arp.c
 
-arp.exe: arp.obj
-	$(CTOOL_CC) -fe=$@ arp.obj wsock32.lib
-
-# stager.exe -- tiny HTTP file staging server
 stager.obj: stager.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c stager.c
 
-stager.exe: stager.obj
-	$(CTOOL_CC) -fe=$@ stager.obj wsock32.lib
-
-# clip.exe -- clipboard read/write from command line
 clip.obj: clip.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c clip.c
-
-clip.exe: clip.obj
-	$(CTOOL_CC) -fe=$@ clip.obj user32.lib
 
 # timestmp.exe -- file timestamp manipulation (8.3: timestmp)
 timestmp.obj: timestmp.c
@@ -1893,5 +1868,110 @@ yoriview.exe: yoriview.obj yoriview.res
 	wrc yoriview.res $@
 
 yori: yori16.exe yori32.exe yoriview.exe .SYMBOLIC
+
+# dumont.exe -- network mapper (the Tower Guardian)
+dumont.obj: dumont.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c dumont.c
+
+dumont.res: dumont.rc
+	$(RCPATH) $(RCFLAGS) dumont.rc -o dumont.res
+
+dumont.exe: dumont.obj dumont.res
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) dumont.obj comdlg32.lib
+	wrc dumont.res $@
+
+# jloshtog.exe -- Joshua log viewer (outwith the main controller)
+jloshtog.obj: jloshtog.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c jloshtog.c
+
+jloshtog.res: jloshtog.rc
+	$(RCPATH) $(RCFLAGS) jloshtog.rc -o jloshtog.res
+
+jloshtog.exe: jloshtog.obj jloshtog.res
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) jloshtog.obj comdlg32.lib
+	wrc jloshtog.res $@
+
+# =================================================================
+# Icon generation
+#
+# Each .ico depends on the source image in icons/.  Updating the
+# PNG/WEBP/JPG source and rebuilding will regenerate the .ico,
+# which causes the .res and .exe to rebuild automatically.
+#
+# Force-regenerate everything:  wmake -f Makefile.wc icons
+# =================================================================
+
+icons: &
+    arp.ico clip.ico flynn.ico grid.ico gridcli.ico ipcalc.ico &
+    joshua.ico lightcycle.ico lightman.ico markuped.ico ncnt.ico &
+    ncwfw.ico reco.ico regcli.ico stager.ico svcany.ico tank.ico &
+    timestmp.ico wget.ico whoami.ico yori.ico yoriview.ico &
+    .SYMBOLIC
+
+arp.ico: ../icons/arp.png
+	$(ICON_CONV) ../icons/arp.png arp.ico
+
+clip.ico: ../icons/clip.png
+	$(ICON_CONV) ../icons/clip.png clip.ico
+
+flynn.ico: ../icons/flynn.png
+	$(ICON_CONV) ../icons/flynn.png flynn.ico
+
+grid.ico: ../icons/grid.png
+	$(ICON_CONV) ../icons/grid.png grid.ico
+
+gridcli.ico: ../icons/gridcli.png
+	$(ICON_CONV) ../icons/gridcli.png gridcli.ico
+
+ipcalc.ico: ../icons/ipcalc.png
+	$(ICON_CONV) ../icons/ipcalc.png ipcalc.ico
+
+joshua.ico: ../icons/joshua.png
+	$(ICON_CONV) ../icons/joshua.png joshua.ico
+
+lightcycle.ico: ../icons/LIGHTCYCLE.PNG
+	$(ICON_CONV) ../icons/LIGHTCYCLE.PNG lightcycle.ico
+
+lightman.ico: ../icons/lightman.png
+	$(ICON_CONV) ../icons/lightman.png lightman.ico
+
+markuped.ico: ../icons/markuped.png
+	$(ICON_CONV) ../icons/markuped.png markuped.ico
+
+ncnt.ico: ../icons/ncnt.png
+	$(ICON_CONV) ../icons/ncnt.png ncnt.ico
+
+ncwfw.ico: ../icons/WOPR.jpg
+	$(ICON_CONV) ../icons/WOPR.jpg ncwfw.ico
+
+reco.ico: ../icons/RECO.webp
+	$(ICON_CONV) ../icons/RECO.webp reco.ico
+
+regcli.ico: ../icons/regcli.png
+	$(ICON_CONV) ../icons/regcli.png regcli.ico
+
+stager.ico: ../icons/stager.png
+	$(ICON_CONV) ../icons/stager.png stager.ico
+
+svcany.ico: ../icons/svcany.png
+	$(ICON_CONV) ../icons/svcany.png svcany.ico
+
+tank.ico: ../icons/TANK.webp
+	$(ICON_CONV) ../icons/TANK.webp tank.ico
+
+timestmp.ico: ../icons/timestmp.png
+	$(ICON_CONV) ../icons/timestmp.png timestmp.ico
+
+wget.ico: ../icons/wget.png
+	$(ICON_CONV) ../icons/wget.png wget.ico
+
+whoami.ico: ../icons/whoami.png
+	$(ICON_CONV) ../icons/whoami.png whoami.ico
+
+yori.ico: ../icons/yori.png
+	$(ICON_CONV) ../icons/yori.png yori.ico
+
+yoriview.ico: ../icons/yoriview.png
+	$(ICON_CONV) ../icons/yoriview.png yoriview.ico
 
 # end of Makefile.wc

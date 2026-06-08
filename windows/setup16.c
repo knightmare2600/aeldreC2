@@ -22,6 +22,19 @@
 #define MAX_PATH 260
 #endif
 
+/* MB_ICONWARNING is Win32-only; Win16 uses MB_ICONEXCLAMATION */
+#ifndef MB_ICONWARNING
+#define MB_ICONWARNING MB_ICONEXCLAMATION
+#endif
+
+/* GetFileAttributes is Win32-only; emulate with OpenFile OF_EXIST */
+static DWORD win16_get_file_attr(const char *p)
+{
+    OFSTRUCT ofs;
+    return (OpenFile(p, &ofs, OF_EXIST) == HFILE_ERROR) ? (DWORD)0xFFFF : 0;
+}
+#define GetFileAttributes win16_get_file_attr
+
 #ifndef WM_DDE_INITIATE
 #define WM_DDE_INITIATE   0x03E0
 #define WM_DDE_TERMINATE  0x03E1

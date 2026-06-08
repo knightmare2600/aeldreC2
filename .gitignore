@@ -118,6 +118,7 @@ Makefile
 /windows/*.dll
 /output/compiled/
 /output/exe/
+/output/*.zip
 /windows/*.pch
 /windows/*.rsp
 /windows/*.obj

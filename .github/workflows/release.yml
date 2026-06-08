@@ -33,7 +33,7 @@ jobs:
         with:
           context: .
           load: true
-          tags: putty-win32s-builder:latest
+          tags: aeldrec2-builder:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -41,7 +41,7 @@ jobs:
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/src" \
-            putty-win32s-builder \
+            aeldrec2-builder \
             wmake -f Makefile.wc dist \
               "XFLAGS=-DAELDRE_VERSION=\"${{ inputs.version }}\""
 

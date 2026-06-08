@@ -1,5 +1,5 @@
 #!/bin/sh
-# build-c2.sh — build AeldreC2 C2 components using the putty-win32s-builder Docker image
+# build-c2.sh — build AeldreC2 C2 components using the aeldrec2-builder Docker image
 #
 # Usage:
 #   ./build-c2.sh                        # build all C2 tools
@@ -21,7 +21,7 @@
 set -e
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
-IMG="putty-win32s-builder"
+IMG="aeldrec2-builder"
 
 # Build XFLAGS from env vars
 XFLAGS=""

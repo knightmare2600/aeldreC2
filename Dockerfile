@@ -1,6 +1,6 @@
 FROM ubuntu:22.04
 
-LABEL description="AeldreC2 build environment — OpenWatcom 2.0 + mingw-w64 Win16/Win32s cross-compiler"
+LABEL description="ÆldreC2 build environment — OpenWatcom 2.0 + mingw-w64 Win16/Win32s cross-compiler"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates wget \
         gcc-mingw-w64-i686 \
         binutils-mingw-w64-i686 \
-        python3 python3-pip xz-utils \
+        python3 python3-pip xz-utils zip \
     && pip3 install --no-cache-dir Pillow \
     && rm -rf /var/lib/apt/lists/*
 

@@ -1,1 +1,4 @@
 1 ICON "joshua.ico"
+
+/* Easter egg — NT4 startup theme.  Place nt4startup.wav in windows/ */
+9001 WAVE "nt4startup.wav"
