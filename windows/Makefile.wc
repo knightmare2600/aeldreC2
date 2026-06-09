@@ -427,7 +427,7 @@ OBJ_ROOTSHARED = &
 # Default target
 # =================================================================
 
-all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe ncnt.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe setup16.exe .SYMBOLIC
+all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe ncnt.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe netstat.exe route.exe netstat16.exe route16.exe setup16.exe .SYMBOLIC
 
 win32s: pageant.exe putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe ipcalc16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe setup16.exe setup32.exe .SYMBOLIC
 
@@ -435,7 +435,7 @@ dist: all .SYMBOLIC
 	sh -c "mkdir -p ../output/compiled ../output/exe"
 	python3 ../tools/mksetup.py --out16 output/exe/setup16.exe --out32 output/exe/setup32.exe
 	python3 ../help/mkhlp.py ../output/compiled/aeldreC2.HLP
-	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
+	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe netstat.exe route.exe netstat16.exe route16.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
 	sh -c "cd ../output && zip -9 -j aeldrec2-tools.zip compiled/*.exe compiled/*.dll compiled/aeldreC2.HLP exe/setup16.exe exe/setup32.exe ../README.md && echo 'Created: output/aeldrec2-tools.zip'"
 
 # =================================================================
@@ -1828,8 +1828,49 @@ gridcli.exe: gridcli.obj gridcli.res
 	$(CC) -bt=nt -l=nt -fe=$@ $(LDFLAGS) gridcli.obj wsock32.lib
 	wrc gridcli.res $@
 
+# =================================================================
+# netstat.exe / route.exe -- Win32 console network diagnostics
+#   NT4+/Win95: native via iphlpapi.dll
+#   NT 3.x    : falls back to exec system netstat/route
+#   Win32s    : prints a clear "not available" message
+# netstat16.exe / route16.exe -- Win16 GUI wrappers for WFW 3.11
+#   Exec COMMAND.COM /c netstat|route and display output in a dialog
+# =================================================================
+
+netstat.obj: netstat.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c netstat.c
+
+netstat.res: netstat.rc ncnt.ico
+	$(RCPATH) $(RCFLAGS) netstat.rc -o netstat.res
+
+netstat.exe: netstat.obj netstat.res
+	$(CTOOL_CC) -fe=$@ netstat.obj wsock32.lib advapi32.lib
+	wrc netstat.res $@
+
+route.obj: route.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c route.c
+
+route.res: route.rc arp.ico
+	$(RCPATH) $(RCFLAGS) route.rc -o route.res
+
+route.exe: route.obj route.res
+	$(CTOOL_CC) -fe=$@ route.obj wsock32.lib advapi32.lib
+	wrc route.res $@
+
+netstat16.obj: netstat16.c
+	wcc -ml -bt=windows -zu -s -fo=$@ netstat16.c
+
+netstat16.exe: netstat16.obj
+	wlink system windows name netstat16.exe file netstat16.obj
+
+route16.obj: route16.c
+	wcc -ml -bt=windows -zu -s -fo=$@ route16.c
+
+route16.exe: route16.obj
+	wlink system windows name route16.exe file route16.obj
+
 # Convenience target: build all NT tools at once
-nt-tools: ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe .SYMBOLIC
+nt-tools: ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe netstat.exe route.exe .SYMBOLIC
 
 # =================================================================
 # Yori: remote screen viewer / control

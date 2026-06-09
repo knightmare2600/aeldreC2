@@ -295,6 +295,10 @@ All binaries are built to `windows/`. Build all at once with `./build-c2.sh`, or
 | `svcany.exe` | Win32 / NT 3.1+ | Install/remove/start/stop any executable as an NT service |
 | `regcli.exe` | Win32 / NT 3.1+ | CLI registry tool for NT 3.x/4.x (fills gap before reg.exe) |
 | `whoami.exe` | Win32 / NT 3.1+ | whoami for NT 3.x (username, domain, SID, groups, privs) |
+| `netstat.exe` | Win32 / NT 3.1+ | Active TCP/UDP connections. NT4+: iphlpapi native; NT 3.x: exec fallback |
+| `netstat16.exe` | Win 3.1 / WFW 3.11 | Active connections via COMMAND.COM capture in a GUI dialog |
+| `route.exe` | Win32 / NT 3.1+ | Display/add/delete IP routes. NT4+: iphlpapi; NT 3.x: exec + registry |
+| `route16.exe` | Win 3.1 / WFW 3.11 | Routing table via COMMAND.COM capture in a GUI dialog |
 | `arp.exe` | Win32 / NT 4+ | ARP table viewer + ICMP ping sweep |
 | `stager.exe` | Win32 / NT 3.1+ | Tiny HTTP file server — serve a file once then exit |
 | `clip.exe` | Win32 / NT 3.1+ | Clipboard read/write from command line |

@@ -167,6 +167,10 @@ jobs:
             | `dumont.exe` | Win32 / NT | Network mapper — renders grid scan output as node map |
             | `ncwfw.exe` | Win32s / NT / 95 | Netcat relay (optional TLS) |
             | `ncnt.exe` | Win32 / NT | Netcat for NT (console) |
+            | `netstat.exe` | Win32 / NT 3.1+ | Active TCP/UDP connections (iphlpapi NT4+; exec fallback NT 3.x) |
+            | `netstat16.exe` | Win 3.1 / WFW 3.11 | Active connections — GUI dialog, COMMAND.COM capture |
+            | `route.exe` | Win32 / NT 3.1+ | IP routing table: print / add / delete |
+            | `route16.exe` | Win 3.1 / WFW 3.11 | Routing table — GUI dialog, COMMAND.COM capture |
             | `arp.exe` | Win32 / NT 4+ | ARP table viewer + ICMP ping sweep |
             | `stager.exe` | Win32 / NT | Tiny HTTP file staging server |
 

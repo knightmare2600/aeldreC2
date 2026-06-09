@@ -64,6 +64,8 @@ TOPICS = [
             "  ncwfw  —  MDI Netcat\r\n"
             "  ipcalc  —  Subnet Calculator\r\n"
             "  wget  —  HTTP Downloader\r\n"
+            "  netstat  —  Active TCP/UDP connections\r\n"
+            "  route    —  IP routing table\r\n"
             "  Network Utilities\r\n"
             "  NT Utilities\r\n"
             "  Themes\r\n",
@@ -397,6 +399,92 @@ TOPICS = [
             "\r\n"
             "Win16 version (wget16.exe) supports HTTP only. Displays a\r\n"
             "MessageBox on completion instead of progress output.\r\n",
+    },
+    {
+        "id":    "netstat",
+        "title": "netstat — Active Connections",
+        "keys":  ["netstat", "connections", "TCP", "UDP", "ports"],
+        "body":
+            "NETSTAT.EXE   —  Active TCP/UDP Connections (Win32 console)\r\n"
+            "NETSTAT16.EXE —  Active TCP/UDP Connections (Win16 / WFW 3.11)\r\n"
+            "\r\n"
+            "USAGE\r\n"
+            "-----\r\n"
+            "  netstat        Show ESTABLISHED and LISTEN TCP connections\r\n"
+            "  netstat -a     Show all connections including UDP listeners\r\n"
+            "\r\n"
+            "PLATFORM NOTES\r\n"
+            "--------------\r\n"
+            "  NT 4 / Win95+\r\n"
+            "    Uses iphlpapi.dll GetTcpTable / GetUdpTable natively.\r\n"
+            "\r\n"
+            "  NT 3.x (3.1 / 3.5 / 3.51)\r\n"
+            "    iphlpapi.dll not available on these platforms.\r\n"
+            "    netstat.exe automatically falls back to executing the\r\n"
+            "    system netstat.exe from %SystemRoot%\\system32\\ and\r\n"
+            "    relaying its output.  NT 3.1 ships with netstat.exe\r\n"
+            "    so this path works reliably.\r\n"
+            "\r\n"
+            "  Win32s / WFW 3.11\r\n"
+            "    netstat.exe falls back to exec; if the system has no\r\n"
+            "    netstat.exe a clear 'not available' message is shown.\r\n"
+            "    netstat16.exe uses a GUI dialog and executes\r\n"
+            "    'netstat -an' via COMMAND.COM, capturing output to\r\n"
+            "    a temp file and displaying it in a scrollable window.\r\n"
+            "    Requires Microsoft TCP/IP-32 or compatible stack.\r\n"
+            "\r\n"
+            "OUTPUT COLUMNS\r\n"
+            "--------------\r\n"
+            "  Proto   TCP or UDP\r\n"
+            "  Local   Local IP address and port\r\n"
+            "  Foreign Remote IP address and port (* = any for UDP)\r\n"
+            "  State   TCP connection state (LISTEN, ESTABLISHED, etc.)\r\n",
+    },
+    {
+        "id":    "route",
+        "title": "route — Routing Table",
+        "keys":  ["route", "routing", "gateway", "IP"],
+        "body":
+            "ROUTE.EXE   —  IP Routing Table (Win32 console)\r\n"
+            "ROUTE16.EXE —  IP Routing Table (Win16 / WFW 3.11)\r\n"
+            "\r\n"
+            "USAGE\r\n"
+            "-----\r\n"
+            "  route print\r\n"
+            "    Display the full IP routing table.\r\n"
+            "\r\n"
+            "  route add <dest> mask <mask> <gateway> [metric <n>]\r\n"
+            "    Add a route.  Example:\r\n"
+            "    route add 10.0.0.0 mask 255.0.0.0 192.168.1.1\r\n"
+            "\r\n"
+            "  route delete <dest>\r\n"
+            "    Delete all routes matching the destination.\r\n"
+            "\r\n"
+            "PLATFORM NOTES\r\n"
+            "--------------\r\n"
+            "  NT 4 / Win95+\r\n"
+            "    Uses iphlpapi.dll GetIpForwardTable natively.\r\n"
+            "    Add/delete use CreateIpForwardEntry / DeleteIpForwardEntry.\r\n"
+            "\r\n"
+            "  NT 3.x (3.1 / 3.5 / 3.51)\r\n"
+            "    Falls back to executing the system route.exe from\r\n"
+            "    %SystemRoot%\\system32\\.  Also reads persistent routes\r\n"
+            "    from the registry key:\r\n"
+            "    HKLM\\SYSTEM\\CurrentControlSet\\Services\\\r\n"
+            "         Tcpip\\Parameters\\PersistentRoutes\r\n"
+            "\r\n"
+            "  Win32s / WFW 3.11\r\n"
+            "    route.exe falls back to exec; route16.exe shows the\r\n"
+            "    routing table in a GUI window via COMMAND.COM capture.\r\n"
+            "    Requires Microsoft TCP/IP-32 or compatible stack.\r\n"
+            "\r\n"
+            "OUTPUT COLUMNS\r\n"
+            "--------------\r\n"
+            "  Destination  Network destination address\r\n"
+            "  Mask         Subnet mask\r\n"
+            "  Gateway      Next-hop IP address\r\n"
+            "  If           Interface index\r\n"
+            "  Metric       Route cost (lower is preferred)\r\n",
     },
     {
         "id":    "network",
