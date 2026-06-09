@@ -39,3 +39,33 @@ jobs:
           name: compiled-tools
           path: output/compiled/
           retention-days: 3
+
+  test:
+    name: Test
+    runs-on: ubuntu-22.04
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Wine with 32-bit support
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo apt-get install -y wine wine32
+
+      - name: Download compiled tools
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-tools
+          path: windows/
+
+      - name: Install Python test dependencies
+        run: pip install pytest requests
+
+      - name: Run tests
+        env:
+          WINEDEBUG: -all
+          DISPLAY: ""
+        run: python3 -m pytest tests/ -v --tb=short -p no:cacheprovider

@@ -20,8 +20,9 @@ CLU_MAGIC = b"AELDRECLU0001"
 MAGIC_LEN  = len(CLU_MAGIC)
 
 # Layout after the magic: host[64] + port[2] (big-endian) + tls[1]
-# Total config block: 13 + 64 + 2 + 1 = 80 bytes
-HOST_OFFSET = MAGIC_LEN
+# char magic[14] includes the null terminator, so host starts at offset 14.
+# Total config block: 14 + 64 + 2 + 1 = 81 bytes
+HOST_OFFSET = MAGIC_LEN + 1  # +1 for the null terminator in char magic[14]
 HOST_LEN    = 64
 PORT_OFFSET = HOST_OFFSET + HOST_LEN
 TLS_OFFSET  = PORT_OFFSET + 2
