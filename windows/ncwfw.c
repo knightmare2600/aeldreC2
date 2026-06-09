@@ -22,6 +22,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "aeldre_theme.h"
+
+static int    g_theme_idx = 0;
+static HBRUSH g_bg_brush  = NULL;
 
 /* ================================================================
  * Schannel / SSPI types -- defined inline so we compile without
@@ -959,6 +963,21 @@ static LRESULT CALLBACK ChildProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         session_close(s);
         break;
 
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wp;
+        const AeldreTheme *t = &g_aeldre_themes[g_theme_idx];
+        SetTextColor(hdc, t->body);
+        SetBkColor(hdc, t->bg);
+        return (LRESULT)g_bg_brush;
+    }
+
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wp; RECT rc;
+        GetClientRect(hwnd, &rc);
+        FillRect(hdc, &rc, g_bg_brush);
+        return 1;
+    }
+
     case WM_DESTROY: {
         int i;
         for (i = 0; i < MAX_SESSIONS; i++) {
@@ -1005,6 +1024,8 @@ static LRESULT CALLBACK FrameProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
     case WM_CREATE: {
         CLIENTCREATESTRUCT ccs;
+        g_theme_idx = aeldre_theme_load();
+        g_bg_brush  = CreateSolidBrush(g_aeldre_themes[g_theme_idx].bg);
         ccs.hWindowMenu  = GetSubMenu(GetMenu(hwnd), 1);
         ccs.idFirstChild = 30000;
         g_mdi = CreateWindow("MDICLIENT", NULL,
@@ -1105,6 +1126,7 @@ static LRESULT CALLBACK FrameProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         break;
 
     case WM_DESTROY:
+        if (g_bg_brush) { DeleteObject(g_bg_brush); g_bg_brush = NULL; }
         PostQuitMessage(0);
         return 0;
     }

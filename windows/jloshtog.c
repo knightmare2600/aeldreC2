@@ -33,6 +33,10 @@
 #include <commdlg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "aeldre_theme.h"
+
+static int    g_theme_idx = 0;
+static HBRUSH g_bg_brush  = NULL;
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
@@ -294,6 +298,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     case WM_CREATE: {
         RECT rc;
+        g_theme_idx = aeldre_theme_load();
+        g_bg_brush  = CreateSolidBrush(g_aeldre_themes[g_theme_idx].bg);
         GetClientRect(hwnd, &rc);
 
         /* Status bar — outwith the edit area, pinned to the bottom   */
@@ -384,7 +390,29 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         break;
 
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wp; RECT rc;
+        GetClientRect(hwnd, &rc);
+        FillRect(hdc, &rc, g_bg_brush);
+        return 1;
+    }
+
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wp;
+        const AeldreTheme *t = &g_aeldre_themes[g_theme_idx];
+        SetTextColor(hdc, t->body); SetBkColor(hdc, t->bg);
+        return (LRESULT)g_bg_brush;
+    }
+
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wp;
+        const AeldreTheme *t = &g_aeldre_themes[g_theme_idx];
+        SetTextColor(hdc, t->body); SetBkColor(hdc, t->bg);
+        return (LRESULT)g_bg_brush;
+    }
+
     case WM_DESTROY:
+        if (g_bg_brush) { DeleteObject(g_bg_brush); g_bg_brush = NULL; }
         PostQuitMessage(0);
         return 0;
     }

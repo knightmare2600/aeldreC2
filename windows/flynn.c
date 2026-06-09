@@ -22,6 +22,10 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "aeldre_theme.h"
+
+static int    g_theme_idx = 0;
+static HBRUSH g_bg_brush  = NULL;
 
 /* ================================================================
  * Constants
@@ -432,6 +436,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         HFONT hf  = (HFONT)GetStockObject(SYSTEM_FIXED_FONT);
         HFONT hfb = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
         HWND  btn;
+        g_theme_idx = aeldre_theme_load();
+        g_bg_brush  = CreateSolidBrush(g_aeldre_themes[g_theme_idx].bg);
         g_oplist = CreateWindow("LISTBOX",NULL,
                     WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_BORDER|LBS_HASSTRINGS,
                     0,0,OPLIST_W,100,hwnd,(HMENU)IDC_OPLIST,g_hinst,NULL);
@@ -527,7 +533,36 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         DestroyWindow(hwnd);
         return 0;
 
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wp; RECT rc;
+        GetClientRect(hwnd, &rc);
+        FillRect(hdc, &rc, g_bg_brush);
+        return 1;
+    }
+
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wp;
+        const AeldreTheme *t = &g_aeldre_themes[g_theme_idx];
+        SetTextColor(hdc, t->body); SetBkColor(hdc, t->bg);
+        return (LRESULT)g_bg_brush;
+    }
+
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wp;
+        const AeldreTheme *t = &g_aeldre_themes[g_theme_idx];
+        SetTextColor(hdc, t->body); SetBkColor(hdc, t->bg);
+        return (LRESULT)g_bg_brush;
+    }
+
+    case WM_CTLCOLORLISTBOX: {
+        HDC hdc = (HDC)wp;
+        const AeldreTheme *t = &g_aeldre_themes[g_theme_idx];
+        SetTextColor(hdc, t->body); SetBkColor(hdc, t->bg);
+        return (LRESULT)g_bg_brush;
+    }
+
     case WM_DESTROY:
+        if (g_bg_brush) { DeleteObject(g_bg_brush); g_bg_brush = NULL; }
         PostQuitMessage(0);
         return 0;
     }

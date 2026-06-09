@@ -213,50 +213,50 @@ Naturally this requires configurable colour schemes.
 
 ### Remote Administration
 
-* Remote command execution
-* Remote shell
-* Environment variable viewing
-* System information collection
-* User information collection
+* Remote command execution ✓ (`shell`, arbitrary passthrough)
+* Remote shell ✓ (`shell` command)
+* Environment variable viewing ✓ (`env`)
+* System information collection ✓ (`sysinfo`)
+* User information collection ✓ (`smb users`, `sysinfo`)
 
 ### Process Management
 
-* Process listing
-* Process termination
-* Process information
-* Task monitoring
+* Process listing ✓ (`ps`)
+* Process termination ✓ (`kill <pid>`)
+* Process information ✓ (`pinfo <pid>`)
+* Task monitoring — not yet implemented
 
 ### File Operations
 
-* File upload
-* File download
-* Directory browsing
-* File deletion
-* File renaming
-* File search
+* File upload ✓ (`put`)
+* File download ✓ (`get`)
+* Directory browsing ✓ (`ls`)
+* File deletion — not yet implemented
+* File renaming — not yet implemented
+* File search — not yet implemented
 
 ### Registry Operations
 
-* Registry viewing
-* Registry searching
-* Registry export
-* Registry editing (optional)
+* Registry viewing ✓ (`regq`)
+* Registry searching — not yet implemented
+* Registry export — not yet implemented
+* Registry editing — not yet implemented
 
 ### Networking
 
-* Connection enumeration
-* Route table viewing
-* Hostname resolution
-* Interface information
-* Remote ping
-* Basic service discovery
+* Connection enumeration ✓ (`netstat` — NT4+ / Win98+)
+* Route table viewing ✓ (`route` — NT4+ / Win98+)
+* Hostname resolution ✓ (`resolve`)
+* Interface information ✓ (`ifconfig` — NT4+ / Win98+)
+* Remote ping — not yet implemented
+* Basic service discovery ✓ (`scan`)
 
 ### Monitoring
 
-* Event logging
-* Session timeline
-* Connection statistics
-* Host inventory
+* Event logging — not yet implemented
+* Session timeline — not yet implemented
+* Connection statistics — not yet implemented
+* Host inventory ✓ (Dumont network mapper)
 
 ---
 
@@ -705,6 +705,9 @@ nmap data files are GPL-licensed. See https://nmap.org/book/man-legal.html
 * **Plugin architecture** — stable ABI design needed first; deferred
 * **WinG visual enhancements** — niche; needs the WinG SDK
 * **Win3.11 installer** — a proper `SETUP.EXE`-style installer in the tradition of UltraEdit, WinZip 5.x etc. Wizard dialogs, progress meter, Program Manager group auto-creation, optional component selection. Needs to run on bare WFW 3.11 with no prerequisites.
+* **Tank: file delete / rename / search** — `del`, `ren`, `find` commands
+* **Tank: task monitoring** — periodic ps output streaming
+* **Tank: registry edit / search / export** — `regs`, `rege`, `regx` commands
 
 ---
 

@@ -73,33 +73,10 @@
 #define BBAR_H   26
 #define CTRL_H   20
 
-/* View menu — theme IDs */
-#define IDM_THEME_DEFAULT  501
-#define IDM_THEME_SOL_DARK 502
-#define IDM_THEME_SOL_LITE 503
-#define IDM_THEME_TERMINAL 504
+#include "aeldre_theme.h"
 
-/* Colour theme */
-typedef struct {
-    COLORREF bg;       /* list background */
-    COLORREF fg;       /* normal text */
-    COLORREF fg_open;  /* "open" port highlight */
-    COLORREF sel_bg;   /* selected-item background */
-} GridTheme;
-
-static const GridTheme k_themes[] = {
-    /* Default */
-    { (COLORREF)-1, (COLORREF)-1, RGB(0,128,0),   (COLORREF)-1 },
-    /* Solarized Dark */
-    { RGB(0,43,54),     RGB(131,148,150), RGB(133,153,0),  RGB(7,54,66)  },
-    /* Solarized Light */
-    { RGB(253,246,227), RGB(101,123,131), RGB(133,153,0),  RGB(238,232,213) },
-    /* Terminal */
-    { RGB(0,0,0),       RGB(0,200,0),     RGB(0,255,0),    RGB(0,40,0)   },
-};
-#define N_THEMES 4
-
-static int g_theme = 0;   /* 0 = default system colours */
+static int    g_theme_idx = 0;
+static HBRUSH g_bg_brush  = NULL;
 
 #define LIST_ITEM_H 16    /* row height for owner-draw */
 
@@ -796,16 +773,8 @@ static LRESULT CALLBACK GridWndProc(HWND hwnd, UINT msg,
         g_hwnd_close = CreateWindow("BUTTON", "Close",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             0, 0, 88, 22, hwnd, (HMENU)IDC_CLOSE_BTN, g_hinst, NULL);
-        {
-            HMENU mb = CreateMenu();
-            HMENU mv = CreatePopupMenu();
-            AppendMenu(mv, MF_STRING | (g_theme==0?MF_CHECKED:0), IDM_THEME_DEFAULT,  "&Default");
-            AppendMenu(mv, MF_STRING | (g_theme==1?MF_CHECKED:0), IDM_THEME_SOL_DARK, "Solarized &Dark");
-            AppendMenu(mv, MF_STRING | (g_theme==2?MF_CHECKED:0), IDM_THEME_SOL_LITE, "Solarized &Light");
-            AppendMenu(mv, MF_STRING | (g_theme==3?MF_CHECKED:0), IDM_THEME_TERMINAL, "&Terminal");
-            AppendMenu(mb, MF_POPUP, (UINT_PTR)mv, "&View");
-            SetMenu(hwnd, mb);
-        }
+        g_theme_idx = aeldre_theme_load();
+        g_bg_brush  = CreateSolidBrush(g_aeldre_themes[g_theme_idx].bg);
         return 0;
 
     case WM_SIZE: {
@@ -866,16 +835,10 @@ static LRESULT CALLBACK GridWndProc(HWND hwnd, UINT msg,
 
             is_open = (strstr(text, "\topen\t") != NULL);
 
-            if (g_theme == 0) {
-                /* Default: system colours, highlight opens in green */
-                bg = GetSysColor((dis->itemState & ODS_SELECTED)
-                                 ? COLOR_HIGHLIGHT : COLOR_WINDOW);
-                fg = is_open ? k_themes[0].fg_open
-                             : GetSysColor(COLOR_WINDOWTEXT);
-            } else {
-                const GridTheme *t = &k_themes[g_theme];
-                bg = (dis->itemState & ODS_SELECTED) ? t->sel_bg : t->bg;
-                fg = is_open ? t->fg_open : t->fg;
+            {
+                const AeldreTheme *t = &g_aeldre_themes[g_theme_idx];
+                bg = (dis->itemState & ODS_SELECTED) ? t->strip : t->bg;
+                fg = is_open ? t->title : t->body;
             }
 
             SetBkColor(dis->hDC, bg);
@@ -905,32 +868,32 @@ static LRESULT CALLBACK GridWndProc(HWND hwnd, UINT msg,
         case IDC_CLOSE_BTN:
             DestroyWindow(hwnd);
             break;
-        case IDM_THEME_DEFAULT:
-        case IDM_THEME_SOL_DARK:
-        case IDM_THEME_SOL_LITE:
-        case IDM_THEME_TERMINAL: {
-            HMENU mb = GetMenu(hwnd);
-            HMENU mv = GetSubMenu(mb, 0);
-            int new_theme = LOWORD(wp) - IDM_THEME_DEFAULT;
-            int j;
-            g_theme = new_theme;
-            for (j = 0; j < N_THEMES; j++)
-                CheckMenuItem(mv, IDM_THEME_DEFAULT + j,
-                              MF_BYCOMMAND | (j == g_theme ? MF_CHECKED : MF_UNCHECKED));
-            if (g_theme > 0 && g_hwnd_list) {
-                /* Force listbox background repaint */
-                const GridTheme *t = &k_themes[g_theme];
-                SendMessage(g_hwnd_list, LB_SETCARETINDEX, 0, FALSE);
-                InvalidateRect(g_hwnd_list, NULL, TRUE);
-            } else if (g_hwnd_list) {
-                InvalidateRect(g_hwnd_list, NULL, TRUE);
-            }
-            break;
-        }
         }
         return 0;
 
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wp; RECT rc;
+        GetClientRect(hwnd, &rc);
+        FillRect(hdc, &rc, g_bg_brush);
+        return 1;
+    }
+
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wp;
+        const AeldreTheme *t = &g_aeldre_themes[g_theme_idx];
+        SetTextColor(hdc, t->body); SetBkColor(hdc, t->bg);
+        return (LRESULT)g_bg_brush;
+    }
+
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wp;
+        const AeldreTheme *t = &g_aeldre_themes[g_theme_idx];
+        SetTextColor(hdc, t->body); SetBkColor(hdc, t->bg);
+        return (LRESULT)g_bg_brush;
+    }
+
     case WM_DESTROY:
+        if (g_bg_brush) { DeleteObject(g_bg_brush); g_bg_brush = NULL; }
         PostQuitMessage(0);
         return 0;
     }

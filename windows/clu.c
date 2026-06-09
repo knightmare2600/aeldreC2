@@ -24,6 +24,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "aeldre_theme.h"
 
 /* ----------------------------------------------------------------
  * Control IDs
@@ -46,7 +47,9 @@
 #define MAGIC_LEN   14
 #define BLOCK_TOTAL 81  /* 14 + 64 + 2 + 1 */
 
-static HINSTANCE g_hinst = NULL;
+static HINSTANCE g_hinst     = NULL;
+static int        g_theme_idx = 0;
+static HBRUSH     g_bg_brush  = NULL;
 
 /* ----------------------------------------------------------------
  * Helpers
@@ -168,6 +171,9 @@ static LRESULT CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         HFONT hf = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
         HWND  hw;
         int   y;
+
+        g_theme_idx = aeldre_theme_load();
+        g_bg_brush  = CreateSolidBrush(g_aeldre_themes[g_theme_idx].bg);
 
         /* Template row */
         y = 12;
@@ -321,7 +327,38 @@ static LRESULT CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
 
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wp;
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        FillRect(hdc, &rc, g_bg_brush);
+        return 1;
+    }
+
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wp;
+        const AeldreTheme *t = &g_aeldre_themes[g_theme_idx];
+        SetTextColor(hdc, t->body);
+        SetBkColor(hdc, t->bg);
+        return (LRESULT)g_bg_brush;
+    }
+
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wp;
+        const AeldreTheme *t = &g_aeldre_themes[g_theme_idx];
+        SetTextColor(hdc, t->body);
+        SetBkColor(hdc, t->bg);
+        return (LRESULT)g_bg_brush;
+    }
+
+    case WM_CTLCOLORBTN: {
+        HDC hdc = (HDC)wp;
+        SetBkColor(hdc, g_aeldre_themes[g_theme_idx].bg);
+        return (LRESULT)g_bg_brush;
+    }
+
     case WM_DESTROY:
+        if (g_bg_brush) { DeleteObject(g_bg_brush); g_bg_brush = NULL; }
         PostQuitMessage(0);
         return 0;
     }

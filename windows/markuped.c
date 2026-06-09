@@ -20,6 +20,10 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "aeldre_theme.h"
+
+static int    g_theme_idx = 0;
+static HBRUSH g_bg_brush  = NULL;
 
 /* ------------------------------------------------------------------ */
 /* Constants                                                            */
@@ -493,10 +497,16 @@ static void preview_paint(HWND hwnd)
     pw = rc.right - rc.left;
 
     SetBkMode(dc, TRANSPARENT);
-    FillRect(dc, &rc, (HBRUSH)(COLOR_WINDOW + 1));
+    SetTextColor(dc, g_aeldre_themes[g_theme_idx].body);
+    {
+        HBRUSH hbg = CreateSolidBrush(g_aeldre_themes[g_theme_idx].bg);
+        FillRect(dc, &rc, hbg);
+        DeleteObject(hbg);
+    }
 
-    br_code  = CreateSolidBrush(RGB(240, 240, 240));
-    br_quote = CreateSolidBrush(RGB(220, 220, 220));
+    /* code/quote blocks: use accent color from theme */
+    br_code  = CreateSolidBrush(g_aeldre_themes[g_theme_idx].strip);
+    br_quote = CreateSolidBrush(g_aeldre_themes[g_theme_idx].strip);
 
     y = 8 - g_prev_scroll;
 
@@ -1179,6 +1189,8 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg,
     switch (msg) {
 
     case WM_CREATE:
+        g_theme_idx = aeldre_theme_load();
+        g_bg_brush  = CreateSolidBrush(g_aeldre_themes[g_theme_idx].bg);
         g_hwnd_edit = CreateWindowEx(
             0,
             "EDIT", "",
@@ -1194,7 +1206,7 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg,
             memset(&wc2, 0, sizeof(wc2));
             wc2.lpfnWndProc   = PreviewWndProc;
             wc2.hInstance     = g_hinst;
-            wc2.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+            wc2.hbrBackground = g_bg_brush;
             wc2.lpszClassName = PREVIEW_CLS;
             wc2.hCursor       = LoadCursor(NULL, IDC_ARROW);
             RegisterClass(&wc2);
@@ -1362,7 +1374,15 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg,
         if (file_confirm_discard()) DestroyWindow(hwnd);
         return 0;
 
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wp;
+        const AeldreTheme *t = &g_aeldre_themes[g_theme_idx];
+        SetTextColor(hdc, t->body); SetBkColor(hdc, t->bg);
+        return (LRESULT)g_bg_brush;
+    }
+
     case WM_DESTROY:
+        if (g_bg_brush) { DeleteObject(g_bg_brush); g_bg_brush = NULL; }
         PostQuitMessage(0);
         return 0;
     }
