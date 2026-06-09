@@ -94,11 +94,12 @@ Makefile
 /doc/licence.but
 /doc/copy.but
 /icons/*.pam
-/icons/*.png
 /icons/*.ico
 /icons/*.icns
 /icons/*.xpm
 /icons/*.c
+!/icons/*.png
+!/icons/*.PNG
 /unix/empty.h
 /unix/plink
 /unix/pterm
