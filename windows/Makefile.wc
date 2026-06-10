@@ -1767,7 +1767,7 @@ CTOOL_CC = $(CC) -bt=nt -l=nt -za99 -ox -D_WIN32
 NT_STUB = -\"option stub=ntstub.exe\"
 
 ntstub.exe: ntstub.asm
-	wasm -ms ntstub.asm
+	wasm -ms -fo=ntstub.obj ntstub.asm
 	wlink system dos file ntstub.obj name ntstub.exe
 
 # NT toolkit tools — compile rules (.exe rules with icons are below)
