@@ -427,7 +427,7 @@ OBJ_ROOTSHARED = &
 # Default target
 # =================================================================
 
-all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe ncnt.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe netstat.exe route.exe netstat16.exe route16.exe setup16.exe .SYMBOLIC
+all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe ncnt.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe clip16.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe netstat.exe route.exe netstat16.exe route16.exe setup16.exe .SYMBOLIC
 
 win32s: pageant.exe putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe ipcalc16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe setup16.exe setup32.exe .SYMBOLIC
 
@@ -435,8 +435,30 @@ dist: all .SYMBOLIC
 	sh -c "mkdir -p ../output/compiled ../output/exe"
 	python3 ../tools/mksetup.py --out16 output/exe/setup16.exe --out32 output/exe/setup32.exe
 	python3 ../help/mkhlp.py ../output/compiled/aeldreC2.HLP
-	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe netstat.exe route.exe netstat16.exe route16.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
+	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe clip16.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe netstat.exe route.exe netstat16.exe route16.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
 	sh -c "cd ../output && zip -9 -j aeldrec2-tools.zip compiled/*.exe compiled/*.dll compiled/aeldreC2.HLP exe/setup16.exe exe/setup32.exe ../README.md && echo 'Created: output/aeldrec2-tools.zip'"
+
+# =================================================================
+# Per-platform distribution targets
+# dist-wfw   : Win16 NE executables for WFW 3.11 / Windows 3.1
+# dist-win32 : Win32 GUI-subsystem PE — Win32s + Win95 + NT
+# dist-nt    : Win32 NT console + advanced-API — NT 3.1+ and Win95
+# dist-all   : all three platform folders
+# =================================================================
+
+dist-wfw: tank16.exe netstat16.exe route16.exe ipcalc16.exe wget16.exe yori16.exe setup16.exe clip16.exe .SYMBOLIC
+	sh -c "mkdir -p ../output/wfw"
+	cp tank16.exe netstat16.exe route16.exe ipcalc16.exe wget16.exe yori16.exe setup16.exe clip16.exe ../output/wfw/
+
+dist-win32: joshua.exe tank.exe clu.exe lightman.exe flynn.exe ncwfw.exe grid.exe clip.exe wget.exe ipcalc32.exe markuped.exe yori32.exe jloshtog.exe setup32.exe .SYMBOLIC
+	sh -c "mkdir -p ../output/win32s"
+	cp joshua.exe tank.exe clu.exe lightman.exe flynn.exe ncwfw.exe grid.exe clip.exe wget.exe ipcalc32.exe markuped.exe yori32.exe jloshtog.exe setup32.exe ../output/win32s/
+
+dist-nt: gridcli.exe ncnt.exe netstat.exe route.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe timestmp.exe yoriview.exe dumont.exe .SYMBOLIC
+	sh -c "mkdir -p ../output/nt"
+	cp gridcli.exe ncnt.exe netstat.exe route.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe timestmp.exe yoriview.exe dumont.exe ../output/nt/
+
+dist-all: dist-wfw dist-win32 dist-nt .SYMBOLIC
 
 # =================================================================
 # be_list.c — per-target compilation with different defines
@@ -1737,6 +1759,17 @@ wu_wmemchr.obj: utils/wmemchr.c
 
 CTOOL_CC = $(CC) -bt=nt -l=nt -za99 -ox -D_WIN32
 
+# NT_STUB: inject ntstub.exe as the DOS stub in NT-only console PE tools.
+# When launched under DOS/Win32s/COMMAND.COM the stub prints
+# "Requires Windows NT 3.1 or later" instead of the default gibberish.
+# wcl386 passes -"option ..." verbatim to wlink; \" preserves the quotes
+# through the shell so wcl386 receives the literal -"..." syntax it expects.
+NT_STUB = -\"option stub=ntstub.exe\"
+
+ntstub.exe: ntstub.asm
+	wasm -ms ntstub.asm
+	wlink system dos file ntstub.obj name ntstub.exe
+
 # NT toolkit tools — compile rules (.exe rules with icons are below)
 ncnt.obj: ncnt.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c ncnt.c
@@ -1766,8 +1799,8 @@ timestmp.obj: timestmp.c
 timestmp.res: timestmp.rc timestmp.ico
 	$(RCPATH) $(RCFLAGS) timestmp.rc -o timestmp.res
 
-timestmp.exe: timestmp.obj timestmp.res
-	$(CTOOL_CC) -fe=$@ timestmp.obj
+timestmp.exe: timestmp.obj timestmp.res ntstub.exe
+	$(CTOOL_CC) $(NT_STUB) -fe=$@ timestmp.obj
 	wrc timestmp.res $@
 
 # --- add icons to console NT tools that have .rc files ---
@@ -1775,43 +1808,43 @@ timestmp.exe: timestmp.obj timestmp.res
 ncnt.res: ncnt.rc ncnt.ico
 	$(RCPATH) $(RCFLAGS) ncnt.rc -o ncnt.res
 
-ncnt.exe: ncnt.obj ncnt.res
-	$(CTOOL_CC) -fe=$@ ncnt.obj wsock32.lib
+ncnt.exe: ncnt.obj ncnt.res ntstub.exe
+	$(CTOOL_CC) $(NT_STUB) -fe=$@ ncnt.obj wsock32.lib
 	wrc ncnt.res $@
 
 svcany.res: svcany.rc svcany.ico
 	$(RCPATH) $(RCFLAGS) svcany.rc -o svcany.res
 
-svcany.exe: svcany.obj svcany.res
-	$(CTOOL_CC) -fe=$@ svcany.obj advapi32.lib
+svcany.exe: svcany.obj svcany.res ntstub.exe
+	$(CTOOL_CC) $(NT_STUB) -fe=$@ svcany.obj advapi32.lib
 	wrc svcany.res $@
 
 regcli.res: regcli.rc regcli.ico
 	$(RCPATH) $(RCFLAGS) regcli.rc -o regcli.res
 
-regcli.exe: regcli.obj regcli.res
-	$(CTOOL_CC) -fe=$@ regcli.obj advapi32.lib
+regcli.exe: regcli.obj regcli.res ntstub.exe
+	$(CTOOL_CC) $(NT_STUB) -fe=$@ regcli.obj advapi32.lib
 	wrc regcli.res $@
 
 whoami.res: whoami.rc whoami.ico
 	$(RCPATH) $(RCFLAGS) whoami.rc -o whoami.res
 
-whoami.exe: whoami.obj whoami.res
-	$(CTOOL_CC) -fe=$@ whoami.obj advapi32.lib netapi32.lib
+whoami.exe: whoami.obj whoami.res ntstub.exe
+	$(CTOOL_CC) $(NT_STUB) -fe=$@ whoami.obj advapi32.lib netapi32.lib
 	wrc whoami.res $@
 
 arp.res: arp.rc arp.ico
 	$(RCPATH) $(RCFLAGS) arp.rc -o arp.res
 
-arp.exe: arp.obj arp.res
-	$(CTOOL_CC) -fe=$@ arp.obj wsock32.lib
+arp.exe: arp.obj arp.res ntstub.exe
+	$(CTOOL_CC) $(NT_STUB) -fe=$@ arp.obj wsock32.lib
 	wrc arp.res $@
 
 stager.res: stager.rc stager.ico
 	$(RCPATH) $(RCFLAGS) stager.rc -o stager.res
 
-stager.exe: stager.obj stager.res
-	$(CTOOL_CC) -fe=$@ stager.obj wsock32.lib
+stager.exe: stager.obj stager.res ntstub.exe
+	$(CTOOL_CC) $(NT_STUB) -fe=$@ stager.obj wsock32.lib
 	wrc stager.res $@
 
 clip.res: clip.rc clip.ico
@@ -1824,8 +1857,8 @@ clip.exe: clip.obj clip.res
 gridcli.res: gridcli.rc gridcli.ico
 	$(RCPATH) $(RCFLAGS) gridcli.rc -o gridcli.res
 
-gridcli.exe: gridcli.obj gridcli.res
-	$(CC) -bt=nt -l=nt -fe=$@ $(LDFLAGS) gridcli.obj wsock32.lib
+gridcli.exe: gridcli.obj gridcli.res ntstub.exe
+	$(CC) -bt=nt -l=nt $(NT_STUB) -fe=$@ $(LDFLAGS) gridcli.obj wsock32.lib
 	wrc gridcli.res $@
 
 # =================================================================
@@ -1843,8 +1876,8 @@ netstat.obj: netstat.c
 netstat.res: netstat.rc ncnt.ico
 	$(RCPATH) $(RCFLAGS) netstat.rc -o netstat.res
 
-netstat.exe: netstat.obj netstat.res
-	$(CTOOL_CC) -fe=$@ netstat.obj wsock32.lib advapi32.lib
+netstat.exe: netstat.obj netstat.res ntstub.exe
+	$(CTOOL_CC) $(NT_STUB) -fe=$@ netstat.obj wsock32.lib advapi32.lib
 	wrc netstat.res $@
 
 route.obj: route.c
@@ -1853,21 +1886,27 @@ route.obj: route.c
 route.res: route.rc arp.ico
 	$(RCPATH) $(RCFLAGS) route.rc -o route.res
 
-route.exe: route.obj route.res
-	$(CTOOL_CC) -fe=$@ route.obj wsock32.lib advapi32.lib
+route.exe: route.obj route.res ntstub.exe
+	$(CTOOL_CC) $(NT_STUB) -fe=$@ route.obj wsock32.lib advapi32.lib
 	wrc route.res $@
 
 netstat16.obj: netstat16.c
-	wcc -ml -bt=windows -zu -s -fo=$@ netstat16.c
+	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ netstat16.c
 
 netstat16.exe: netstat16.obj
 	wlink system windows name netstat16.exe file netstat16.obj
 
 route16.obj: route16.c
-	wcc -ml -bt=windows -zu -s -fo=$@ route16.c
+	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ route16.c
 
 route16.exe: route16.obj
 	wlink system windows name route16.exe file route16.obj
+
+clip16.obj: clip16.c
+	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ clip16.c
+
+clip16.exe: clip16.obj
+	wlink system windows name clip16.exe file clip16.obj
 
 # Convenience target: build all NT tools at once
 nt-tools: ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe netstat.exe route.exe .SYMBOLIC

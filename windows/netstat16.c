@@ -22,6 +22,9 @@
 #ifndef MAX_PATH
 #define MAX_PATH 260
 #endif
+#ifndef DEFAULT_GUI_FONT
+#define DEFAULT_GUI_FONT SYSTEM_FONT
+#endif
 
 #define IDC_OUTPUT  100
 #define IDC_REFRESH 101
@@ -85,11 +88,14 @@ static void do_run(HWND hwnd)
     fsz = _llseek(hf, 0, 2);
     _llseek(hf, 0, 0);
 
-    buf = malloc((int)fsz + 4);
+    /* Cap at 60000 bytes — _lread takes UINT on Win16 (max 65535); cap
+     * also guards against the 16-bit int truncation on larger outputs. */
+    { unsigned int bsz = (fsz > 60000L) ? 60000u : (unsigned int)fsz;
+    buf = malloc(bsz + 4);
     if (buf) {
         char  *out; char *p, *q;
         int    rd;
-        rd = _lread(hf, buf, (int)fsz);
+        rd = _lread(hf, buf, bsz);
         buf[rd > 0 ? rd : 0] = '\0';
         /* Normalise newlines for edit control */
         out = malloc(rd * 2 + 4);
@@ -105,6 +111,7 @@ static void do_run(HWND hwnd)
         }
         free(buf);
     }
+    } /* end bsz block */
     _lclose(hf);
     unlink(tmpfile);
     SetDlgItemText(hwnd, IDC_STATUS, "Done.");

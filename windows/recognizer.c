@@ -36,26 +36,46 @@ static int check_debugger(void)
     return 1;
 }
 
+/* Registry and username checks use advapi32 via runtime load so the
+ * recognizer does not add ADVAPI32.DLL to the static PE import table.
+ * On Win32s (where advapi32 is absent) the checks are skipped and we
+ * return "clean" — the main tank.c advapi32 load already handles this. */
+typedef LONG  (WINAPI *pfn_RegOpenKeyEx)(HKEY,LPCSTR,DWORD,DWORD,HKEY*);
+typedef LONG  (WINAPI *pfn_RegCloseKey)(HKEY);
+typedef BOOL  (WINAPI *pfn_GetUserName)(LPSTR,LPDWORD);
+
 static int check_vm_key(const char *subkey)
 {
-    HKEY hk;
-    LONG r = RegOpenKeyEx(HKEY_LOCAL_MACHINE, subkey, 0, KEY_READ, &hk);
-    if (r == ERROR_SUCCESS) { RegCloseKey(hk); return 0; }
+    HMODULE hAdv = GetModuleHandle("advapi32.dll");
+    pfn_RegOpenKeyEx fOpen;
+    pfn_RegCloseKey  fClose;
+    HKEY hk; LONG r;
+    if (!hAdv) return 1; /* advapi32 absent (Win32s) — skip check */
+    fOpen  = (pfn_RegOpenKeyEx)GetProcAddress(hAdv, "RegOpenKeyExA");
+    fClose = (pfn_RegCloseKey) GetProcAddress(hAdv, "RegCloseKey");
+    if (!fOpen || !fClose) return 1;
+    r = fOpen(HKEY_LOCAL_MACHINE, subkey, 0, KEY_READ, &hk);
+    if (r == ERROR_SUCCESS) { fClose(hk); return 0; }
     return 1;
 }
 
 static int check_username(void)
 {
+    HMODULE hAdv = GetModuleHandle("advapi32.dll");
+    pfn_GetUserName fGetUser;
     static const char *bad[] = {
         "sandbox", "malware", "virus", "cuckoo",
-        "analyst", "analysis", "test", "user", NULL
+        "analyst", "analysis", NULL
     };
     char name[128];
     DWORD sz = sizeof(name);
     int   i;
     char  lower[128];
 
-    if (!GetUserName(name, &sz)) return 1;
+    if (!hAdv) return 1; /* Win32s — skip */
+    fGetUser = (pfn_GetUserName)GetProcAddress(hAdv, "GetUserNameA");
+    if (!fGetUser) return 1;
+    if (!fGetUser(name, &sz)) return 1;
     sz = lstrlen(name);
     for (i = 0; i < (int)sz && i < 127; i++)
         lower[i] = (char)((name[i] >= 'A' && name[i] <= 'Z') ? name[i]+32 : name[i]);
@@ -68,16 +88,19 @@ static int check_username(void)
 
 static int check_timing(void)
 {
-    /* A tight 100k-iteration loop takes ~0 ms in an emulator running
-     * at accelerated speed, and at least 1 ms on real hardware. */
+    /* 2M iterations: enough that real vintage hardware (486/Pentium) always
+     * spans at least 2 GetTickCount ticks (~30 ms at 15 ms resolution on
+     * NT/Win95; ~110 ms at 55 ms resolution on Win 3.x).  An emulator
+     * running the guest at boosted host-CPU speed may still complete in 0
+     * ticks; combined with the VM-registry and debugger checks this gives
+     * sufficient signal without false-positiving on fast real hardware. */
     DWORD t0, t1, i;
     volatile DWORD x = 0;
     t0 = GetTickCount();
-    for (i = 0; i < 100000UL; i++) x += i;
+    for (i = 0; i < 2000000UL; i++) x += i;
     t1 = GetTickCount();
     (void)x;
-    /* If the loop ran in 0 ticks (emulated / very fast emulation): bail */
-    if (t1 == t0) return 0;
+    if (t1 - t0 < 2) return 0;   /* fewer than 2 ticks — suspiciously fast */
     return 1;
 }
 

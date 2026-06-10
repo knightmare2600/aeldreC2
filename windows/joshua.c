@@ -294,6 +294,10 @@ typedef struct {
     char **macro_cmds;           /* recorded command strings          */
     int    macro_count;
     int    macro_cap;
+    /* Session statistics — bytes and command count since connect      */
+    DWORD  stat_bytes_in;
+    DWORD  stat_bytes_out;
+    int    stat_cmd_count;
 } JoshSession;
 
 #define MAX_SESSIONS 16
@@ -970,9 +974,10 @@ static void session_set_title(JoshSession *s)
     if (s->is_tank) {
         const char *state = s->cmd_busy ? " [busy]" : " [ready]";
         if (s->state != NS_CONNECTED) state = " [disconnected]";
-        sprintf(title, "Tank: %s  %s%s",
+        sprintf(title, "Tank: %s  %s%s  rx:%lu tx:%lu cmds:%d",
                 s->tank_host[0] ? s->tank_host : "unknown",
-                s->tank_os, state);
+                s->tank_os, state,
+                s->stat_bytes_in, s->stat_bytes_out, s->stat_cmd_count);
     } else {
         const char *state_str = "";
         switch (s->state) {
@@ -1128,6 +1133,7 @@ static void session_process_data(JoshSession *s, const char *buf, int len)
             if (s->file_recv_hfile != INVALID_HANDLE_VALUE) {
                 char info[MAX_PATH + 80];
                 s->recv_mode = RECV_FILE;
+                s->cmd_busy  = 1;   /* prevent operator sending cmds mid-transfer */
                 sprintf(info, "[Receiving %lu bytes -> %s]\r\n",
                         (unsigned long)fsz, tmpfile);
                 session_append(s, info);
@@ -1322,7 +1328,9 @@ static void session_close(JoshSession *s)
         DestroyWindow(s->pkt_hwnd);
         s->pkt_hwnd = NULL;
     }
-    s->recv_mode   = RECV_TEXT;
+    s->recv_mode    = RECV_TEXT;
+    s->cmd_busy     = 0;
+    s->pager_active = 0;
     script_free(s);
     if (s->macro_rec) {
         s->macro_rec = 0;
@@ -1350,6 +1358,11 @@ static void joshua_send_put_data(JoshSession *s)
         return;
     }
     fsz = GetFileSize(hf, NULL);
+    if (fsz == INVALID_FILE_SIZE) {
+        CloseHandle(hf);
+        session_append(s, "[Put: cannot get file size]\r\n");
+        return;
+    }
     sprintf(hdr, "PUTSIZE:%lu\n", (unsigned long)fsz);
     if (s->tls && g_tls_avail)
         tls_encrypt_send(s, hdr, lstrlen(hdr));
@@ -1449,12 +1462,15 @@ static void tls_handshake_feed(JoshSession *s)
         send(s->sock,(char*)out_buf.pvBuffer,(int)out_buf.cbBuffer,0);
         p_FreeCtxBuf(out_buf.pvBuffer);
     }
-    s->tls_ibuf_len = 0;
-    for (i=0;i<2;i++) {
-        if (in_bufs[i].BufferType==NC_SECBUFFER_EXTRA && in_bufs[i].cbBuffer>0) {
-            int ex=(int)in_bufs[i].cbBuffer;
-            memmove(s->tls_ibuf, s->tls_ibuf+(s->tls_ibuf_len-ex), ex);
-            s->tls_ibuf_len=ex; break;
+    {
+        int orig_len = s->tls_ibuf_len;   /* must be saved before zeroing */
+        s->tls_ibuf_len = 0;
+        for (i=0;i<2;i++) {
+            if (in_bufs[i].BufferType==NC_SECBUFFER_EXTRA && in_bufs[i].cbBuffer>0) {
+                int ex=(int)in_bufs[i].cbBuffer;
+                memmove(s->tls_ibuf, s->tls_ibuf+(orig_len-ex), ex);
+                s->tls_ibuf_len=ex; break;
+            }
         }
     }
     if (ss==NC_SEC_E_OK) {
@@ -1541,7 +1557,17 @@ static int tls_encrypt_send(JoshSession *s, const char *data, int dlen)
  * ================================================================ */
 static void gen_server_key(void)
 {
-    DWORD seed = GetTickCount() ^ (DWORD)(UINT_PTR)GetModuleHandle(NULL);
+    LARGE_INTEGER qpc;
+    DWORD seed;
+    /* Mix multiple independent sources to resist prediction from boot time alone.
+     * QueryPerformanceCounter (sub-microsecond on NT 3.x+) provides the most
+     * entropy; PID and TID add further unpredictability. */
+    seed  = GetTickCount();
+    seed ^= (DWORD)(UINT_PTR)GetModuleHandle(NULL);
+    seed ^= GetCurrentProcessId();
+    seed ^= GetCurrentThreadId();
+    if (QueryPerformanceCounter(&qpc))
+        seed ^= qpc.LowPart ^ (DWORD)qpc.HighPart;
     srand((unsigned int)seed);
     sprintf(g_server_key, "%04X%04X",
             (unsigned)(rand() & 0xFFFF),
@@ -1843,13 +1869,7 @@ static void op_send(JoshSession *s, const char *line)
 
 static void operator_broadcast(const char *text)
 {
-    int   i;
-    char  line[ACCUM_SZ + 4];
-    int   tlen = lstrlen(text);
-    /* Ensure CRLF termination for the wire */
-    strncpy(line, text, ACCUM_SZ - 2);
-    line[ACCUM_SZ - 2] = '\0';
-    /* Also echo to the local console session window */
+    int i;
     if (g_console_sess)
         session_append(g_console_sess, text);
     for (i = 0; i < MAX_SESSIONS; i++) {
@@ -1857,10 +1877,8 @@ static void operator_broadcast(const char *text)
         if (!s || !s->is_op || !s->op_authed) continue;
         if (s->state != NS_CONNECTED)         continue;
         op_send(s, text);
-        /* Also append to the operator's MDI child */
         session_append(s, text);
     }
-    (void)tlen;
 }
 
 static int handle_is_unique(const char *handle)
@@ -2193,6 +2211,7 @@ static void handle_socket_event(SOCKET sock, int event, int err)
     case FD_READ:
         n = recv(sock, buf, sizeof(buf) - 1, 0);
         if (n <= 0) break;
+        s->stat_bytes_in += (DWORD)n;
         if (s->state == NS_TLS_SHAKE) {
             int room = NC_IBUF - s->tls_ibuf_len;
             if (n > room) n = room;
@@ -2250,7 +2269,7 @@ static void handle_socket_event(SOCKET sock, int event, int err)
  * ================================================================ */
 static void session_send_cmd(JoshSession *s, const char *cmd)
 {
-    char buf[MAX_PATH + 8];
+    char buf[4096 + 8];   /* match Tank's CMD_BUFSZ receive buffer */
     int  len;
     if (!s || s->state != NS_CONNECTED) return;
     strncpy(buf, cmd, sizeof(buf) - 3);
@@ -2268,6 +2287,8 @@ static void session_send_cmd(JoshSession *s, const char *cmd)
     else
         send(s->sock, buf, len, 0);
 
+    s->stat_bytes_out += (DWORD)len;
+    s->stat_cmd_count++;
     s->cmd_busy = 1;
     session_set_title(s);
     session_append(s, "> ");
@@ -2583,6 +2604,7 @@ static const char *k_tab_cmds[] = {
     "smb admins", "smb acl ", "smb stat ", "smb sessions",
     "rdp", "rdp sessions", "rdp logoff ",
     "scan ", "cwd", "pwd", "cd ", "cat ", "less ", "persist", "persist remove",
+    "mkdir ", "cp ", "attrib ", "ping ",
     "shell",
     "exit", "quit",
     /* Console /commands */

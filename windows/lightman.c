@@ -342,13 +342,13 @@ static void do_send(void)
     if (g_state != ST_CONNECTED) {
         out_append("[not connected]\r\n"); return;
     }
-    buf[len] = '\r'; buf[len+1] = '\n'; buf[len+2] = '\0';
-    net_send(buf);
-    /* Echo locally */
+    /* Snapshot text before appending CRLF — the send buffer is reused for
+     * the echo and must be NUL-terminated at len, not mid-string '\r'. */
     {
         char echo[MAX_LINE + 8];
-        buf[len] = '\0';
-        sprintf(echo, "<%s> %s\r\n", g_handle, buf);
+        sprintf(echo, "<%s> %s\r\n", g_handle, buf);  /* buf[len]=='\0' here */
+        buf[len] = '\r'; buf[len+1] = '\n'; buf[len+2] = '\0';
+        net_send(buf);
         out_append(echo);
     }
 }

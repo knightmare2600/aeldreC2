@@ -73,6 +73,7 @@ static char *read_file(const char *path, DWORD *out_size)
                     NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hf == INVALID_HANDLE_VALUE) return NULL;
     sz  = GetFileSize(hf, NULL);
+    if (sz == 0 || sz == INVALID_FILE_SIZE) { CloseHandle(hf); return NULL; }
     buf = (char *)malloc(sz);
     if (!buf) { CloseHandle(hf); return NULL; }
     if (!ReadFile(hf, buf, sz, &rd, NULL) || rd != sz) {

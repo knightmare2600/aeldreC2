@@ -346,9 +346,16 @@ static void cmd_put(SOCKET s, const char *path)
 
     hf = _lcreat(path, 0);
     if (hf == HFILE_ERROR) {
-        /* drain and discard */
-        recv_exact(s, chunk, (unsigned long)expected < sizeof(chunk) ?
-                   (unsigned long)expected : sizeof(chunk));
+        /* drain full upload before reporting error — partial drain would leave
+         * bytes in the stream and corrupt the session command loop. */
+        long drained = 0;
+        while (drained < expected) {
+            int want = (int)(expected - drained < (long)sizeof(chunk) ?
+                             expected - drained : (long)sizeof(chunk));
+            int n = w_recv(s, chunk, want, 0);
+            if (n <= 0) return;
+            drained += n;
+        }
         send_str(s, "Error: cannot create file\r\n<<<DONE>>>\n");
         return;
     }
@@ -542,21 +549,33 @@ static void exec_command(SOCKET s, const char *cmd)
         return;
     }
 
-    /* Wait for child — GetModuleUsage > 0 while the module is loaded */
+    /* Wait for child — poll until output size stops changing for 300 ms,
+     * or the 15-second deadline expires.  Breaking on the first non-empty
+     * read truncates output for commands that write in bursts (e.g. dir /s). */
     {
         unsigned long deadline = GetTickCount() + 15000UL;
-        MSG msg;
+        long   last_fsz   = -1;
+        unsigned long stable_since = 0;
+        MSG    msg;
+
         while (GetTickCount() < deadline) {
             if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
                 TranslateMessage(&msg);
                 DispatchMessage(&msg);
             }
-            /* Once the temp file exists and is non-empty, assume done */
             hf = _lopen(tmpfile, OF_READ);
             if (hf != HFILE_ERROR) {
                 fsz = _llseek(hf, 0, 2);
                 _lclose(hf);
-                if (fsz > 0) break;
+                if (fsz > 0 && fsz == last_fsz) {
+                    if (!stable_since)
+                        stable_since = GetTickCount();
+                    else if (GetTickCount() - stable_since >= 300UL)
+                        break;   /* size unchanged for 300 ms — done */
+                } else {
+                    stable_since = 0;
+                }
+                last_fsz = fsz;
             }
         }
     }
@@ -577,8 +596,7 @@ static void exec_command(SOCKET s, const char *cmd)
         fsz -= rd;
     }
     _lclose(hf);
-    _dos_findfirst(tmpfile, _A_NORMAL, NULL);  /* exist check only */
-    unlink(tmpfile);
+    unlink(tmpfile); /* ignore error if file didn't exist */
     send_str(s, "<<<DONE>>>\n");
 }
 

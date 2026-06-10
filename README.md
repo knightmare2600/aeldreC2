@@ -209,6 +209,107 @@ Naturally this requires configurable colour schemes.
 
 ---
 
+## Platform Distribution
+
+### Why per-platform binaries are required
+
+This is a hard technical constraint, not a design choice. A single `.exe` cannot transparently run as a native application on all four target environments. Here is exactly why.
+
+**The executable format boundary is absolute.**
+
+Windows selects the application model from the file header before any code runs:
+
+| Header signature | Loader | Environment |
+|---|---|---|
+| `MZ` → `NE` extension | Win16 kernel (`KRNL386.EXE`) | WFW 3.11, Windows 3.1 |
+| `MZ` → `PE` extension | Win32 / Win32s loader | Win32s, Win95, NT |
+
+A file is either NE or PE. There is no "both". A PE file presented to bare WFW 3.11 without Win32s is seen as an MZ DOS program; the loader runs the 16-bit DOS stub at the front of the file and exits. That stub executes in real-mode DOS (a VDM), not as a Win16 application — it has no `CreateWindow`, no message loop, no WFW integration whatsoever. The custom DOS stub described below makes the best of this: it prints a clear error and exits. It cannot become a functional Win16 application.
+
+**Win32s rejects console-subsystem PE executables at the loader.**
+
+Win32s adds Win32 support to WFW 3.11, but it implements only the `SUBSYSTEM_WINDOWS` (GUI) PE loader. `SUBSYSTEM_CONSOLE` binaries are rejected before `WinMain` is reached — the Win32s thunk layer checks the PE optional header subsystem field and refuses to load anything that requires a console subsystem, because Win32s provides none. This is why tools compiled with `-l=nt` (console) display "Windows NT console app" and fail under Win32s, while tools compiled with `-l=nt_win` (GUI) run correctly.
+
+**NT-only tools require NT subsystems that do not exist on WFW.**
+
+Tools such as `svcany`, `whoami`, and `regcli` do not fail on WFW purely due to binary format. Even if the format issue were somehow resolved, they would have nothing to call: the NT Service Control Manager, the Local Security Authority, and the NT registry security model are NT kernel components that are absent from WFW 3.11 entirely. There is no meaningful Win16 equivalent to provide.
+
+**The "fat binary" is not a viable escape hatch.**
+
+The only way to embed multiple execution paths in one file is via the DOS stub — the 64-byte real-mode preamble present in every MZ/NE/PE file. A custom stub can contain arbitrary 16-bit real-mode code, but that code runs in a DOS VDM box: it cannot load as a proper Win16 NE application. Some software ships a Win16 *launcher* (an NE file) that detects Win32s via `GetWinFlags()` and `WinExec`s a companion PE when Win32s is present, but this requires two physical files on disk. It is a deployment convenience, not a universal binary.
+
+**This is standard C2 practice.**
+
+Every major contemporary C2 framework generates per-platform payloads. Metasploit `msfvenom` distinguishes `windows/x86`, `windows/x64`, and `windows/mipsle` as separate targets. Sliver, Havoc, and Cobalt Strike all generate per-OS/per-architecture implants from their respective generators. ÆldreC2 follows the same model, with CLU as the deployment tool: the operator selects the correct template binary for the target node's OS before patching it with the callback address. The target platform is a known property of the node being compromised; choosing the wrong binary is no different from choosing the wrong architecture on a modern C2.
+
+---
+
+### Output folder structure
+
+```
+output/
+  wfw/      Win16 NE executables — WFW 3.11 and Windows 3.1
+               Compiler: wcc -ml -bt=windows -I/opt/watcom/h/win
+               Runs on: bare WFW 3.11 (no Win32s required), Windows 3.1
+               Cannot run on: Win32s, Win95, NT (wrong executable format)
+
+  win32s/   Win32 GUI-subsystem PE — broadest Win32 compatibility
+               Compiler: wcl386 -bt=nt -l=nt_win
+               Runs on: Win32s + WFW 3.11, Windows 95, NT 3.1 / 3.51 / 4
+               Cannot run on: bare WFW 3.11 without Win32s
+
+  nt/       Win32 NT console + advanced-API PE
+               Compiler: wcl386 -bt=nt -l=nt (console) or -l=nt_win (GUI)
+               Runs on: NT 3.1+, Windows 95
+               Cannot run on: Win32s or bare WFW (console subsystem absent)
+```
+
+All C source files maintain parity across these targets. Any feature added to one platform build must be considered for all others where the underlying API permits it.
+
+### Binary placement by platform
+
+| Binary | wfw/ | win32s/ | nt/ |
+|--------|:----:|:-------:|:---:|
+| `joshua.exe` | — | ✓ | ✓ |
+| `tank.exe` | — | ✓ | ✓ |
+| `tank16.exe` | ✓ | — | — |
+| `clu.exe` | — | ✓ | ✓ |
+| `lightman.exe` | — | ✓ | ✓ |
+| `flynn.exe` | — | ✓ | ✓ |
+| `ncwfw.exe` | — | ✓ | ✓ |
+| `grid.exe` | — | ✓ | ✓ |
+| `gridcli.exe` | — | — | ✓ |
+| `ncnt.exe` | — | — | ✓ |
+| `ncnt16.exe` | ✓ | — | — |
+| `netstat.exe` | — | — | ✓ |
+| `netstat16.exe` | ✓ | — | — |
+| `route.exe` | — | — | ✓ |
+| `route16.exe` | ✓ | — | — |
+| `svcany.exe` | — | — | ✓ (NT SCM required) |
+| `regcli.exe` | — | — | ✓ (NT registry security required) |
+| `whoami.exe` | — | — | ✓ (NT LSA required) |
+| `arp.exe` | — | — | ✓ |
+| `stager.exe` | — | — | ✓ |
+| `clip.exe` | — | ✓ | ✓ |
+| `clip16.exe` | ✓ | — | — |
+| `timestmp.exe` | — | — | ✓ |
+| `wget.exe` | — | ✓ | ✓ |
+| `wget16.exe` | ✓ | — | — |
+| `ipcalc32.exe` | — | ✓ | ✓ |
+| `ipcalc16.exe` | ✓ | — | — |
+| `markuped.exe` | — | ✓ | ✓ |
+| `yori16.exe` | ✓ | — | — |
+| `yori32.exe` | — | ✓ | ✓ |
+| `yoriview.exe` | — | — | ✓ |
+| `dumont.exe` | — | — | ✓ |
+| `jloshtog.exe` | — | ✓ | ✓ |
+| `setup16.exe` | ✓ | — | — |
+| `setup32.exe` | — | ✓ | ✓ |
+
+Tools in `nt/` only — `svcany`, `regcli`, `whoami` — will carry a custom 16-bit DOS stub that prints `Requires Windows NT 3.1 or later` when run under COMMAND.COM on WFW/Win32s, replacing the default cryptic `This program cannot be run in DOS mode`.
+
+---
+
 ## Planned Capabilities
 
 ### Remote Administration
@@ -234,6 +335,9 @@ Naturally this requires configurable colour schemes.
 * File deletion ✓ (`del`)
 * File renaming ✓ (`ren`)
 * File search ✓ (`find [root] <pattern>` — recursive)
+* Directory creation ✓ (`mkdir`)
+* File copy on target ✓ (`cp`)
+* File attribute change ✓ (`attrib [+/-RSHA] <path>` — display or set read-only/hidden/system/archive)
 
 ### Registry Operations
 
@@ -248,14 +352,15 @@ Naturally this requires configurable colour schemes.
 * Route table viewing ✓ (`route` — NT4+ / Win98+)
 * Hostname resolution ✓ (`resolve`)
 * Interface information ✓ (`ifconfig` — NT4+ / Win98+)
-* Remote ping — not yet implemented
+* Remote ping ✓ (`ping` — 4 ICMP echo via `icmp.dll`, reports RTT + TTL; NT 3.5+ / Win95+)
 * Basic service discovery ✓ (`scan`)
+* Periodic task streaming — not yet implemented (`watch <interval> <cmd>`; requires protocol extension)
 
 ### Monitoring
 
-* Event logging — not yet implemented
-* Session timeline — not yet implemented
-* Connection statistics — not yet implemented
+* Event logging — not yet implemented (Joshua)
+* Session timeline — not yet implemented (Joshua)
+* Connection statistics ✓ (bytes rx/tx and command count per session, shown in tank title bar)
 * Host inventory ✓ (Dumont network mapper)
 
 ---
@@ -278,7 +383,7 @@ This means:
 
 ## Tools
 
-All binaries are built to `windows/`. Build all at once with `./build-c2.sh`, or individual tools by name.
+Binaries are built into `windows/` (working directory) and distributed into `output/wfw/`, `output/win32s/`, and `output/nt/` by platform (see Platform Distribution). Build all at once with `./build-c2.sh`, or individual tools by name.
 
 | Binary | Platform | Role |
 |--------|----------|------|
@@ -302,6 +407,7 @@ All binaries are built to `windows/`. Build all at once with `./build-c2.sh`, or
 | `arp.exe` | Win32 / NT 4+ | ARP table viewer + ICMP ping sweep |
 | `stager.exe` | Win32 / NT 3.1+ | Tiny HTTP file server — serve a file once then exit |
 | `clip.exe` | Win32 / NT 3.1+ | Clipboard read/write from command line |
+| `clip16.exe` | Win 3.1 / WFW 3.11 | Clipboard read/write for Win16 — displays content in MessageBox; saves to file or writes from command-line arg |
 | `timestmp.exe` | Win32 / NT 3.1+ | File timestamp copy and set — 8.3: timestmp (authorised forensic testing) |
 | `yori16.exe` | Win 3.1 / WFW 3.11 | Remote screen server — runs **on target**; listens on TCP 5353 |
 | `yori32.exe` | Win32s / Win95 / NT 3.1+ | Remote screen server — runs **on target**; listens on TCP 5353 |
@@ -703,13 +809,40 @@ nmap data files are GPL-licensed. See https://nmap.org/book/man-legal.html
 * ~~Sound support for session events~~ — system sounds on tank/operator connect and disconnect
 * ~~Offline log analysis~~ — `jloshtog.exe`
 * ~~Easter egg~~ — `£` during startup splash plays the Windows NT 4 startup theme
+* ~~ADVAPI32 static import~~ — removed from `tank.exe` PE import table; runtime-loaded; tank now starts on Win32s
+* ~~Recognizer false-positives~~ — timing loop raised to 2M iterations / ≥2 ticks; "test" and "user" removed from username blacklist
+* ~~`regs` / `regx` wrong recursive paths~~ — `regs_recurse` and `regx_recurse` now pass `hbase` + `fullpath` through all levels
+* ~~`persist` WFW unquoted path~~ — `self_path` now quoted in `win.ini load=`; remove path strips quotes before comparing
+* ~~`netstat16` / `route16` missing Win16 include path~~ — `-I/opt/watcom/h/win` added to Makefile rules
+* ~~`mkdir`, `cp`, `attrib`~~ — added to tank.c and Joshua tab completion
+* ~~`ping`~~ — added to tank.c; `icmp.dll` runtime load, 4 pings, TTL+RTT
+* ~~`clip16.exe`~~ — Win16 WFW clipboard tool; read/write via MessageBox UI
+* ~~Connection statistics~~ — `stat_bytes_in/out/cmd_count` in `JoshSession`; shown in tank title bar
+* ~~Per-platform output folders~~ — `dist-wfw`, `dist-win32`, `dist-nt`, `dist-all` Makefile targets
+* ~~Custom DOS stubs~~ — `ntstub.asm` → `ntstub.exe`; embedded via `option stub=` in 10 NT-only console tools; prints "Requires Windows NT 3.1 or later" instead of default message
 
-### Future Work
+### Platform Distribution — Remaining
 
+* **`ncnt16.exe`** — Win16 single-connection netcat for WFW; low priority as `ncwfw.exe` covers most use cases
+
+### Tank (Win32) — Remaining
+
+* **`watch <interval> <cmd>`** — repeat a command every N seconds; requires protocol extension (`<<<WATCH_TICK>>>` separator between iterations while the command slot stays open; Joshua also needs updating)
+
+### Tank (Win16) — Remaining
+
+* **`screenshot`** — Win16 GDI has `CreateCompatibleBitmap` / `BitBlt`; same BMP-over-socket approach as `tank.c` is feasible (~80 lines)
+
+### Joshua — Remaining
+
+* **Event logging** — structured per-session event log (separate from free-text `joshua.log`); fields: timestamp, session ID, event type, detail
+* **Session timeline** — MDI child showing cross-session events chronologically, filterable by type
+
+### Infrastructure — Remaining
+
+* **Win3.11 installer** — proper `SETUP.EXE`-style wizard; Program Manager group auto-creation; optional component selection; must run on bare WFW 3.11
 * **Plugin architecture** — stable ABI design needed first; deferred
 * **WinG visual enhancements** — niche; needs the WinG SDK
-* **Win3.11 installer** — a proper `SETUP.EXE`-style installer in the tradition of UltraEdit, WinZip 5.x etc. Wizard dialogs, progress meter, Program Manager group auto-creation, optional component selection. Needs to run on bare WFW 3.11 with no prerequisites.
-* **Tank: periodic task streaming** — `watch`-style repeated ps (requires protocol extension)
 
 ---
 
@@ -720,8 +853,8 @@ nmap data files are GPL-licensed. See https://nmap.org/book/man-legal.html
 | Component | File | Notes |
 |-----------|------|-------|
 | **Joshua** | `windows/joshua.c` | MDI C2 controller. Listens on :4444. Session list panel, Tank banner parsing, file receive, put/screenshot, Schannel TLS. 21-theme engine (View → Theme, WIN.INI persistence). Sound events (winmm.dll). Session scripting and macro recording/playback. Packet viewer (live hex dump MDI child). `/scansubnet` → Dumont pipeline. Tab completion. Easter egg (£ → NT4 startup WAV). |
-| **Tank (Win32)** | `windows/tank.c` | Connect-back implant, Win32s compatible. Commands: sysinfo, ps, ls, get, put, regq, screenshot, scan, portfwd, socks4, smb, rdp, shell, cat, less, persist, cd. Embedded async TCP scanner (same select-pool model as gridcli; streams TSV to Joshua). Schannel TLS. CLU patchable. |
-| **Tank (Win16)** | `windows/tank16.c` | Connect-back implant for Windows 3.1/WFW without Win32s. Commands: sysinfo, ls, get, put, shell exec. 16-bit Winsock via dynamic WINSOCK.DLL load. CLU patchable. |
+| **Tank (Win32)** | `windows/tank.c` | Connect-back implant, Win32s compatible. Commands: sysinfo, ps, ls, get, put, regq, screenshot, scan, portfwd, socks4, smb, rdp, shell, cat, less, persist, cd, mkdir, cp, attrib, ping, del, ren, find, tasklist, regs, rege, regx, env, kill, pinfo, resolve, ifconfig, netstat, route. Embedded async TCP scanner. Schannel TLS. CLU patchable. ADVAPI32 runtime-loaded (Win32s compatible). |
+| **Tank (Win16)** | `windows/tank16.c` | Connect-back implant for Windows 3.1/WFW without Win32s. Commands: sysinfo, ls, get, put, env, ps, kill, pinfo, resolve, ifconfig, shell exec. 16-bit Winsock via dynamic WINSOCK.DLL load. CLU patchable. |
 | **CLU** | `windows/clu.c` | Win32 GUI generator. Scans template binary for magic `AELDRECLU0001`, patches host/port/tls in-place. Browse dialogs for template and output. |
 | **Recognizer** | `windows/recognizer.c` | Anti-analysis module. Inactive stub by default; activate with `-DRECOGNIZER_ENABLE`. Checks: IsDebuggerPresent, VMware/VBox/VirtualPC registry keys, sandbox usernames, timing. |
 | **ncwfw** | `windows/ncwfw.c` | MDI netcat (TCP + optional TLS). Standalone test/debug tool. |
