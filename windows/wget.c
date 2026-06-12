@@ -392,6 +392,8 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
 
 #else /* Win32 --------------------------------------------------------- */
 
+#include "aeldre_theme.h"
+
 /* ------------------------------------------------------------------ */
 /* Win32: WinInet dynamic load                                          */
 /* ------------------------------------------------------------------ */
@@ -473,6 +475,8 @@ static HWND   g_hwnd_pbar  = NULL;
 static HWND   g_hwnd_stop  = NULL;
 static int    g_stopped    = 0;
 static HINSTANCE g_hinst   = NULL;
+static int    g_theme      = 0;
+static HBRUSH g_bg_brush   = NULL;
 
 static void pbar_update(HWND hwnd, long done, long total)
 {
@@ -490,14 +494,16 @@ static void pbar_update(HWND hwnd, long done, long total)
     else
         filled = 0;
 
-    /* filled part */
+    /* filled part — use theme accent colour */
     rc.right = rc.left + filled;
-    SetBkColor(dc, GetSysColor(COLOR_HIGHLIGHT));
+    SetBkColor(dc, g_bg_brush ? g_aeldre_themes[g_theme].strip
+                              : GetSysColor(COLOR_HIGHLIGHT));
     ExtTextOut(dc, 0, 0, ETO_OPAQUE, &rc, "", 0, NULL);
     /* unfilled part */
     rc.left  = filled;
     rc.right = w;
-    SetBkColor(dc, GetSysColor(COLOR_BTNFACE));
+    SetBkColor(dc, g_bg_brush ? g_aeldre_themes[g_theme].bg
+                              : GetSysColor(COLOR_BTNFACE));
     ExtTextOut(dc, 0, 0, ETO_OPAQUE, &rc, "", 0, NULL);
 
     ReleaseDC(hwnd, dc);
@@ -507,6 +513,10 @@ static LRESULT CALLBACK ProgWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
     case WM_CREATE:
+        if (!g_bg_brush) {
+            g_theme    = aeldre_theme_load();
+            g_bg_brush = CreateSolidBrush(g_aeldre_themes[g_theme].bg);
+        }
         g_hwnd_url  = CreateWindow("STATIC", "",
             WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
             8, 8, 380, 16, hwnd, (HMENU)IDC_URL_LABEL,  g_hinst, NULL);
@@ -564,8 +574,18 @@ static LRESULT CALLBACK ProgWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         EndPaint(hwnd, &ps);
         return 0;
     }
-
+    case WM_ERASEBKGND: {
+        HDC hdc=(HDC)wp; RECT rc;
+        GetClientRect(hwnd,&rc); FillRect(hdc,&rc,g_bg_brush); return 1;
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc=(HDC)wp; const AeldreTheme *t=&g_aeldre_themes[g_theme];
+        SetTextColor(hdc,t->body); SetBkColor(hdc,t->bg); return (LRESULT)g_bg_brush;
+    }
+    case WM_CTLCOLORBTN:
+        SetBkColor((HDC)wp,g_aeldre_themes[g_theme].bg); return (LRESULT)g_bg_brush;
     case WM_DESTROY:
+        if (g_bg_brush) { DeleteObject(g_bg_brush); g_bg_brush = NULL; }
         PostQuitMessage(0);
         return 0;
     }
@@ -844,7 +864,10 @@ static LRESULT CALLBACK UrlDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         HFONT hf = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
         HWND  hw;
         int   y = 12;
-
+        if (!g_bg_brush) {
+            g_theme    = aeldre_theme_load();
+            g_bg_brush = CreateSolidBrush(g_aeldre_themes[g_theme].bg);
+        }
         hw = CreateWindow("STATIC", "URL:",
                           WS_CHILD|WS_VISIBLE|SS_LEFT,
                           8,y+3,60,18,hwnd,NULL,g_hinst,NULL);
@@ -896,6 +919,20 @@ static LRESULT CALLBACK UrlDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         g_urldlg = NULL; g_dlg_url_wnd = NULL; g_dlg_out_wnd = NULL;
         return 0;
+    case WM_ERASEBKGND: {
+        HDC hdc=(HDC)wp; RECT rc;
+        GetClientRect(hwnd,&rc); FillRect(hdc,&rc,g_bg_brush); return 1;
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc=(HDC)wp; const AeldreTheme *t=&g_aeldre_themes[g_theme];
+        SetTextColor(hdc,t->body); SetBkColor(hdc,t->bg); return (LRESULT)g_bg_brush;
+    }
+    case WM_CTLCOLOREDIT: {
+        HDC hdc=(HDC)wp; const AeldreTheme *t=&g_aeldre_themes[g_theme];
+        SetTextColor(hdc,t->body); SetBkColor(hdc,t->bg); return (LRESULT)g_bg_brush;
+    }
+    case WM_CTLCOLORBTN:
+        SetBkColor((HDC)wp,g_aeldre_themes[g_theme].bg); return (LRESULT)g_bg_brush;
     }
     return DefWindowProc(hwnd, msg, wp, lp);
 }

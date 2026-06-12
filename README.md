@@ -274,15 +274,21 @@ All C source files maintain parity across these targets. Any feature added to on
 | `tank.exe` | — | ✓ | ✓ |
 | `tank16.exe` | ✓ | — | — |
 | `clu.exe` | — | ✓ | ✓ |
-| `lightman.exe` | — | ✓ | ✓ |
+| `lightman.exe` | — | — | ✓ |
+| `lman16.exe` | ✓ | — | — |
+| `nc16.exe` | ✓ | — | — |
+| `grid16.exe` | ✓ | — | — |
+| `grid32.exe` | — | — | ✓ |
+| `gridnt.exe` | — | — | ✓ |
 | `flynn.exe` | — | ✓ | ✓ |
 | `ncwfw.exe` | — | ✓ | ✓ |
 | `grid.exe` | — | ✓ | ✓ |
 | `gridcli.exe` | — | — | ✓ |
 | `ncnt.exe` | — | — | ✓ |
 | `ncnt16.exe` | ✓ | — | — |
-| `netstat.exe` | — | — | ✓ |
-| `netstat16.exe` | ✓ | — | — |
+| `netstatN.exe` | — | — | ✓ |
+| `net-stat.exe` | — | ✓ | — |
+| `net_stat.exe` | ✓ | — | — |
 | `route.exe` | — | — | ✓ |
 | `route16.exe` | ✓ | — | — |
 | `svcany.exe` | — | — | ✓ (NT SCM required) |
@@ -306,7 +312,7 @@ All C source files maintain parity across these targets. Any feature added to on
 | `setup16.exe` | ✓ | — | — |
 | `setup32.exe` | — | ✓ | ✓ |
 
-Tools in `nt/` only — `svcany`, `regcli`, `whoami` — will carry a custom 16-bit DOS stub that prints `Requires Windows NT 3.1 or later` when run under COMMAND.COM on WFW/Win32s, replacing the default cryptic `This program cannot be run in DOS mode`.
+Tools in `nt/` — `svcany`, `regcli`, `whoami`, `lightman`, and the other console-subsystem binaries — carry a custom 16-bit DOS stub that prints `Requires Windows NT 3.1 or later` when run under COMMAND.COM on WFW/Win32s, replacing the default cryptic `This program cannot be run in DOS mode`.
 
 ---
 
@@ -354,7 +360,8 @@ Tools in `nt/` only — `svcany`, `regcli`, `whoami` — will carry a custom 16-
 * Interface information ✓ (`ifconfig` — NT4+ / Win98+)
 * Remote ping ✓ (`ping` — 4 ICMP echo via `icmp.dll`, reports RTT + TTL; NT 3.5+ / Win95+)
 * Basic service discovery ✓ (`scan`)
-* Periodic task streaming — not yet implemented (`watch <interval> <cmd>`; requires protocol extension)
+* Periodic task streaming ✓ (`watch <interval_ms> <cmd>`; `<<<WATCH_TICK>>>` separates iterations; send any input to stop)
+* `netstat.exe` renamed to `netstatN.exe` (NT 3.1+); `net-stat.exe` added (Win9x/Win32s GUI); `netstat16.exe` renamed to `net_stat.exe` (WFW 3.11, 8.3-safe)
 
 ### Monitoring
 
@@ -391,7 +398,12 @@ Binaries are built into `windows/` (working directory) and distributed into `out
 | `tank.exe` | Win32s / NT / 95 | Implant — connect-back agent |
 | `tank16.exe` | Win 3.1 / WFW 3.11 | Implant — 16-bit connect-back agent |
 | `clu.exe` | Win32s / NT / 95 | Implant generator / binary patcher |
-| `lightman.exe` | Win32s / NT / 95 | CLI operator client (connects to Joshua) |
+| `lightman.exe` | Win32 / NT 3.1+ | CLI operator client — pure console, runs in cmd.exe |
+| `lman16.exe` | Win 3.1 / WFW 3.11 | CLI operator client — runs from COMMAND.COM DOS Prompt |
+| `nc16.exe` | Win 3.1 / WFW 3.11 | Netcat pivot tool — connect-out or listen, raw relay |
+| `grid16.exe` | Win 3.1 / WFW 3.11 | TCP port scanner — COMMAND.COM console, operator or tank-driven |
+| `grid32.exe` | Win32 / NT 3.1+ | TCP port scanner — Win95/NT console, deployable on target |
+| `gridnt.exe` | Win32 / NT 3.1+ | TCP port scanner — NT operator scanner, coloured output |
 | `flynn.exe` | Win32s / NT / 95 | GUI operator client (connects to Joshua) |
 | `ncwfw.exe` | Win32s / NT / 95 | Netcat-style TCP relay |
 | `grid.exe` | Win32s / NT / 95 | TCP port scanner (GUI / auto-detect) |
@@ -400,8 +412,9 @@ Binaries are built into `windows/` (working directory) and distributed into `out
 | `svcany.exe` | Win32 / NT 3.1+ | Install/remove/start/stop any executable as an NT service |
 | `regcli.exe` | Win32 / NT 3.1+ | CLI registry tool for NT 3.x/4.x (fills gap before reg.exe) |
 | `whoami.exe` | Win32 / NT 3.1+ | whoami for NT 3.x (username, domain, SID, groups, privs) |
-| `netstat.exe` | Win32 / NT 3.1+ | Active TCP/UDP connections. NT4+: iphlpapi native; NT 3.x: exec fallback |
-| `netstat16.exe` | Win 3.1 / WFW 3.11 | Active connections via COMMAND.COM capture in a GUI dialog |
+| `netstatN.exe` | Win32 / NT 3.1+ | Active TCP/UDP connections. NT4+: iphlpapi native; NT 3.x: exec fallback |
+| `net-stat.exe` | Win9x / Win32s | Active connections — GUI dialog; iphlpapi or COMMAND.COM fallback |
+| `net_stat.exe` | Win 3.1 / WFW 3.11 | Active connections via COMMAND.COM capture in a GUI dialog |
 | `route.exe` | Win32 / NT 3.1+ | Display/add/delete IP routes. NT4+: iphlpapi; NT 3.x: exec + registry |
 | `route16.exe` | Win 3.1 / WFW 3.11 | Routing table via COMMAND.COM capture in a GUI dialog |
 | `arp.exe` | Win32 / NT 4+ | ARP table viewer + ICMP ping sweep |
@@ -478,11 +491,16 @@ Sessions (tanks + operator clients) appear in the left panel. Each session opens
 Named after David Lightman from *WarGames*.
 
 ```bat
+rem  With handle on the command line (no prompt):
+lightman.exe 172.16.93.1 4444 A3F7B291 operator
+
+rem  Without handle — prompts in the console or via dialog:
 lightman.exe 172.16.93.1 4444 A3F7B291
-rem  Prompts for your handle (nom-de-plume), then connects
 ```
 
-A single window shows the operator log. Type commands or chat in the input field at the bottom. Admin commands start with `/`.
+Pure console tool — runs in an NT `cmd.exe` window.  Use `flynn.exe` for a GUI operator client on Win32s/Win95.
+
+Type commands or `/` operator commands at the prompt. Admin commands start with `/`.
 
 ---
 
@@ -526,12 +544,16 @@ Both speak the same protocol; a single Joshua controller handles sessions from e
 Patches the C2 callback address and port into a built implant without recompiling.
 
 ```bat
-rem 1. Open clu.exe
-rem 2. Browse to tank.exe (or tank16.exe) as template
-rem 3. Set C2 host: 172.16.93.1  Port: 4444
-rem 4. Optionally tick TLS
-rem 5. Browse to output path, click Generate
+rem 1. Start joshua.exe — note the Server key printed in the startup log (e.g. A3F7B291)
+rem 2. Open clu.exe
+rem 3. Browse to tank.exe (or tank16.exe) as template
+rem 4. Set C2 host: 172.16.93.1  Port: 4444
+rem 5. Paste the Server key from Joshua (e.g. A3F7B291)
+rem 6. Optionally tick TLS
+rem 7. Browse to output path, click Generate
 ```
+
+The server key is regenerated each time Joshua starts. Tanks patched with a key from a previous Joshua session will not connect until re-patched. Use `/regenkey` in the Joshua console to rotate the key and re-patch all implants.
 
 ---
 
@@ -827,11 +849,11 @@ nmap data files are GPL-licensed. See https://nmap.org/book/man-legal.html
 
 ### Tank (Win32) — Remaining
 
-* **`watch <interval> <cmd>`** — repeat a command every N seconds; requires protocol extension (`<<<WATCH_TICK>>>` separator between iterations while the command slot stays open; Joshua also needs updating)
+* ~~**`watch <interval> <cmd>`**~~ — implemented; `watch <ms> <cmd>` repeats a shell command every N ms; `<<<WATCH_TICK>>>` separates iterations; Joshua displays `═══` tick separator and keeps slot open; send any input from operator to stop
 
 ### Tank (Win16) — Remaining
 
-* **`screenshot`** — Win16 GDI has `CreateCompatibleBitmap` / `BitBlt`; same BMP-over-socket approach as `tank.c` is feasible (~80 lines)
+* ~~**`screenshot`**~~ — implemented; 24bpp BMP via Win16 GDI (`CreateCompatibleBitmap` / `BitBlt` / `GetDIBits`); row-by-row send to avoid >64KB allocation; packed BITMAPFILEHEADER avoids struct alignment issues
 
 ### Joshua — Remaining
 
@@ -853,8 +875,8 @@ nmap data files are GPL-licensed. See https://nmap.org/book/man-legal.html
 | Component | File | Notes |
 |-----------|------|-------|
 | **Joshua** | `windows/joshua.c` | MDI C2 controller. Listens on :4444. Session list panel, Tank banner parsing, file receive, put/screenshot, Schannel TLS. 21-theme engine (View → Theme, WIN.INI persistence). Sound events (winmm.dll). Session scripting and macro recording/playback. Packet viewer (live hex dump MDI child). `/scansubnet` → Dumont pipeline. Tab completion. Easter egg (£ → NT4 startup WAV). |
-| **Tank (Win32)** | `windows/tank.c` | Connect-back implant, Win32s compatible. Commands: sysinfo, ps, ls, get, put, regq, screenshot, scan, portfwd, socks4, smb, rdp, shell, cat, less, persist, cd, mkdir, cp, attrib, ping, del, ren, find, tasklist, regs, rege, regx, env, kill, pinfo, resolve, ifconfig, netstat, route. Embedded async TCP scanner. Schannel TLS. CLU patchable. ADVAPI32 runtime-loaded (Win32s compatible). |
-| **Tank (Win16)** | `windows/tank16.c` | Connect-back implant for Windows 3.1/WFW without Win32s. Commands: sysinfo, ls, get, put, env, ps, kill, pinfo, resolve, ifconfig, shell exec. 16-bit Winsock via dynamic WINSOCK.DLL load. CLU patchable. |
+| **Tank (Win32)** | `windows/tank.c` | Connect-back implant, Win32s compatible. Commands: sysinfo, ps, ls, get, put, regq, screenshot, scan, portfwd, socks4, smb, rdp, shell, cat, less, persist, cd, mkdir, cp, attrib, ping, del, ren, find, tasklist, regs, rege, regx, env, kill, pinfo, resolve, ifconfig, netstat, route, watch. Embedded async TCP scanner. Schannel TLS. CLU patchable. ADVAPI32 runtime-loaded (Win32s compatible). |
+| **Tank (Win16)** | `windows/tank16.c` | Connect-back implant for Windows 3.1/WFW without Win32s. Commands: sysinfo, ls, get, put, env, ps, kill, pinfo, resolve, ifconfig, screenshot, shell exec. 16-bit Winsock via dynamic WINSOCK.DLL load. CLU patchable. |
 | **CLU** | `windows/clu.c` | Win32 GUI generator. Scans template binary for magic `AELDRECLU0001`, patches host/port/tls in-place. Browse dialogs for template and output. |
 | **Recognizer** | `windows/recognizer.c` | Anti-analysis module. Inactive stub by default; activate with `-DRECOGNIZER_ENABLE`. Checks: IsDebuggerPresent, VMware/VBox/VirtualPC registry keys, sandbox usernames, timing. |
 | **ncwfw** | `windows/ncwfw.c` | MDI netcat (TCP + optional TLS). Standalone test/debug tool. |
@@ -935,6 +957,8 @@ Win32s is required to run Win32 tools on Windows 3.11 / WFW 3.11.
 
 The setup installer (`setup16.exe`) probes for Win32s at startup and warns if absent.
 
+The Win32s distribution installer (`setup32.exe`, built with InnoSetup 1.2.16) **requires Win32s to already be installed** on Windows 3.11 / WFW 3.11 before it can run — install Win32s first via `pw1232.exe`, then run `setup32.exe`. On Windows 95 and NT 3.x/4.x, `setup32.exe` runs without any prerequisites.
+
 ---
 
 ## Testing
@@ -993,9 +1017,9 @@ wmake -f Makefile.wc clu
 wmake -f Makefile.wc ncwfw
 ```
 
-### Override C2 callback address at compile time
+### Override C2 callback address and key at compile time
 
-No shell quoting needed — pass the IP bare, without quotes:
+No shell quoting needed — pass the IP and key bare, without quotes:
 
 ```bash
 # Via build script (recommended)
@@ -1004,7 +1028,12 @@ C2HOST=172.16.93.1 C2PORT=443 ./build-c2.sh tank
 # Via wmake directly
 wmake -f Makefile.wc tank.exe XFLAGS=-DTANK_C2_HOST=172.16.93.1
 wmake -f Makefile.wc tank.exe XFLAGS="-DTANK_C2_HOST=172.16.93.1 -DTANK_C2_PORT=443"
+
+# Bake host, port and key (use CLU instead for per-engagement patching)
+wmake -f Makefile.wc tank.exe XFLAGS="-DTANK_C2_HOST=172.16.93.1 -DTANK_C2_PORT=4444 -DTANK_C2_KEY=A3F7B291"
 ```
+
+The default key `00000000` will not match any real Joshua session — tanks built without patching will be rejected on connect. Use CLU to patch the key after starting Joshua.
 
 The source uses `#`-stringification (`TANK_STR(x)`) so the IP is converted to a
 string literal by the preprocessor. This avoids the shell-quoting nightmare that
@@ -1047,7 +1076,7 @@ Runs on Windows 3.1 or WFW 3.11. Requires `WINSOCK.DLL` (Trumpet Winsock or equi
 
 | Direction | Message | Meaning |
 |-----------|---------|---------|
-| Tank → Joshua | `Tank/1 host=X os=Y shell=Z\n` | Banner on connect |
+| Tank → Joshua | `Tank/1 host=X os=Y shell=Z key=XXXXXXXX\n` | Banner on connect (key must match Joshua server key) |
 | Joshua → Tank | `sysinfo\r\n` etc. | Command |
 | Tank → Joshua | text lines | Command output |
 | Tank → Joshua | `FILE:<n>\n` + n bytes | File transfer (get/screenshot) |
@@ -1055,6 +1084,7 @@ Runs on Windows 3.1 or WFW 3.11. Requires `WINSOCK.DLL` (Trumpet Winsock or equi
 | Tank → Joshua | `PUTREADY\n` | Ready to receive |
 | Joshua → Tank | `PUTSIZE:<n>\n` + n bytes | File data |
 | Tank → Joshua | `<<<DONE>>>\n` | End of response |
+| Tank → Joshua | `<<<WATCH_TICK>>>\n` | Watch iteration boundary (cmd slot stays open) |
 
 ---
 

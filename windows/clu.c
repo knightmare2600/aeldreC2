@@ -13,6 +13,7 @@
  *    14      64   host (NUL-terminated, zero-padded)
  *    78       2   port (little-endian WORD)
  *    80       1   tls  (0 or 1)
+ *    81       9   key  (8 hex chars + NUL — must match Joshua server key)
  *
  * Build:
  *   wmake -f Makefile.wc clu
@@ -42,10 +43,13 @@
 #define IDC_CHK_TLS    110
 #define IDC_BTN_GEN    111
 #define IDC_BTN_EXIT   112
+#define IDC_LBL_KEY    113
+#define IDC_EDT_KEY    114
+#define IDC_LBL_KEYHINT 115
 
 #define MAGIC       "AELDRECLU0001"
 #define MAGIC_LEN   14
-#define BLOCK_TOTAL 81  /* 14 + 64 + 2 + 1 */
+#define BLOCK_TOTAL 90  /* 14 + 64 + 2 + 1 + 9 */
 
 static HINSTANCE g_hinst     = NULL;
 static int        g_theme_idx = 0;
@@ -104,7 +108,8 @@ static int patch_binary(HWND hwnd,
                         const char *out_path,
                         const char *host,
                         int port,
-                        int tls_flag)
+                        int tls_flag,
+                        const char *key)
 {
     char  *buf;
     DWORD  sz;
@@ -112,7 +117,7 @@ static int patch_binary(HWND hwnd,
     int    found = 0;
     WORD   port_le;
     BYTE   tls_byte;
-    char   msg2[MAX_PATH + 64];
+    char   msg2[MAX_PATH + 128];
 
     buf = read_file(tmpl_path, &sz);
     if (!buf) {
@@ -146,6 +151,10 @@ static int patch_binary(HWND hwnd,
     tls_byte = (BYTE)(tls_flag ? 1 : 0);
     buf[i + 80] = (char)tls_byte;
 
+    /* Patch key[9] at offset 81 — 8 hex chars + NUL */
+    memset(buf + i + 81, 0, 9);
+    strncpy(buf + i + 81, key, 8);
+
     if (!write_file(out_path, buf, sz)) {
         free(buf);
         sprintf(msg2, "Cannot write output file:\r\n%s", out_path);
@@ -154,8 +163,8 @@ static int patch_binary(HWND hwnd,
     }
     free(buf);
 
-    sprintf(msg2, "Generated:\r\n%s\r\n\r\nHost: %s  Port: %d  TLS: %s",
-            out_path, host, port, tls_flag ? "yes" : "no");
+    sprintf(msg2, "Generated:\r\n%s\r\n\r\nHost: %s  Port: %d  TLS: %s  Key: %s",
+            out_path, host, port, tls_flag ? "yes" : "no", key);
     MessageBox(hwnd, msg2, "CLU", MB_OK | MB_ICONINFORMATION);
     return 1;
 }
@@ -222,8 +231,22 @@ static LRESULT CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                           420, y+2, 60, 18, hwnd, (HMENU)IDC_CHK_TLS, g_hinst, NULL);
         SendMessage(hw, WM_SETFONT, (WPARAM)hf, FALSE);
 
+        /* Server Key row */
+        y = 108;
+        hw = CreateWindow("STATIC", "Server Key:", WS_CHILD|WS_VISIBLE|SS_LEFT,
+                          8, y+3, 72, 18, hwnd, (HMENU)IDC_LBL_KEY, g_hinst, NULL);
+        SendMessage(hw, WM_SETFONT, (WPARAM)hf, FALSE);
+        hw = CreateWindow("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL|ES_UPPERCASE,
+                          84, y, 90, 22, hwnd, (HMENU)IDC_EDT_KEY, g_hinst, NULL);
+        SendMessage(hw, WM_SETFONT, (WPARAM)hf, FALSE);
+        SendMessage(hw, EM_SETLIMITTEXT, 8, 0);
+        hw = CreateWindow("STATIC", "  (8 hex digits — copy from Joshua startup log)",
+                          WS_CHILD|WS_VISIBLE|SS_LEFT,
+                          180, y+3, 300, 18, hwnd, (HMENU)IDC_LBL_KEYHINT, g_hinst, NULL);
+        SendMessage(hw, WM_SETFONT, (WPARAM)hf, FALSE);
+
         /* Buttons */
-        y = 112;
+        y = 148;
         hw = CreateWindow("BUTTON", "Generate", WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON,
                           116, y, 110, 28, hwnd, (HMENU)IDC_BTN_GEN, g_hinst, NULL);
         SendMessage(hw, WM_SETFONT, (WPARAM)hf, FALSE);
@@ -273,13 +296,14 @@ static LRESULT CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
 
         case IDC_BTN_GEN: {
-            char tmpl[MAX_PATH], out[MAX_PATH], host[64], port_str[8];
-            int  port, tls;
+            char tmpl[MAX_PATH], out[MAX_PATH], host[64], port_str[8], key[16];
+            int  port, tls, ki;
 
             GetDlgItemText(hwnd, IDC_EDT_TMPL, tmpl, MAX_PATH);
             GetDlgItemText(hwnd, IDC_EDT_OUT,  out,  MAX_PATH);
             GetDlgItemText(hwnd, IDC_EDT_HOST, host, sizeof(host));
             GetDlgItemText(hwnd, IDC_EDT_PORT, port_str, sizeof(port_str));
+            GetDlgItemText(hwnd, IDC_EDT_KEY,  key,  sizeof(key));
             port = atoi(port_str);
             tls  = (SendDlgItemMessage(hwnd, IDC_CHK_TLS, BM_GETCHECK, 0, 0) == BST_CHECKED);
 
@@ -287,8 +311,21 @@ static LRESULT CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (out[0]  == '\0') { error_box(hwnd, "No output file specified.");   return 0; }
             if (host[0] == '\0') { error_box(hwnd, "Host is empty.");              return 0; }
             if (port <= 0 || port > 65535) { error_box(hwnd, "Invalid port (1-65535)."); return 0; }
+            if (lstrlen(key) != 8) {
+                error_box(hwnd, "Server Key must be exactly 8 hex digits.\r\n"
+                                "Copy it from Joshua's startup log, e.g. A3F7B291.");
+                return 0;
+            }
+            for (ki = 0; ki < 8; ki++) {
+                char c = key[ki];
+                if (!((c>='0'&&c<='9')||(c>='A'&&c<='F')||(c>='a'&&c<='f'))) {
+                    error_box(hwnd, "Server Key must contain only hex digits (0-9, A-F).");
+                    return 0;
+                }
+            }
+            CharUpperBuff(key, 8);
 
-            patch_binary(hwnd, tmpl, out, host, port, tls);
+            patch_binary(hwnd, tmpl, out, host, port, tls, key);
             return 0;
         }
 
@@ -314,9 +351,9 @@ static LRESULT CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             int mid = cw / 2;
             if (GetDlgItem(hwnd, IDC_BTN_GEN))
-                MoveWindow(GetDlgItem(hwnd, IDC_BTN_GEN),  mid - 120, 112, 110, 28, TRUE);
+                MoveWindow(GetDlgItem(hwnd, IDC_BTN_GEN),  mid - 120, 148, 110, 28, TRUE);
             if (GetDlgItem(hwnd, IDC_BTN_EXIT))
-                MoveWindow(GetDlgItem(hwnd, IDC_BTN_EXIT), mid + 14,  112, 110, 28, TRUE);
+                MoveWindow(GetDlgItem(hwnd, IDC_BTN_EXIT), mid + 14,  148, 110, 28, TRUE);
         }
         return 0;
     }
@@ -324,7 +361,7 @@ static LRESULT CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_GETMINMAXINFO: {
         MINMAXINFO *mm = (MINMAXINFO *)lp;
         mm->ptMinTrackSize.x = 502;
-        mm->ptMinTrackSize.y = 162;
+        mm->ptMinTrackSize.y = 210;
         return 0;
     }
 
@@ -396,7 +433,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
         "CLU  \xe6ldreC2 Implant Generator",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_THICKFRAME,
         CW_USEDEFAULT, CW_USEDEFAULT,
-        660, 200,
+        660, 240,
         NULL, NULL, hInst, NULL);
 
     if (!hwnd) return 1;

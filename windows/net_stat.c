@@ -1,5 +1,5 @@
 /*
- * netstat16.c  --  AeldreC2 netstat for Win16 / WFW 3.11
+ * net_stat.c  --  AeldreC2 netstat for Win16 / WFW 3.11
  *
  * Runs 'netstat -an' via COMMAND.COM, captures output to a temp file,
  * and displays it in a scrollable edit control.
@@ -8,8 +8,8 @@
  * present and accessible from COMMAND.COM.
  *
  * Build:
- *   wcc -ml -bt=windows -zu -s netstat16.c
- *   wlink system windows name netstat16.exe file netstat16.obj
+ *   wcc -ml -bt=windows -zu -s net_stat.c
+ *   wlink system windows name net_stat.exe file net_stat.obj
  */
 
 #include <windows.h>
@@ -87,6 +87,8 @@ static void do_run(HWND hwnd)
     }
     fsz = _llseek(hf, 0, 2);
     _llseek(hf, 0, 0);
+    if (fsz <= 0) { _lclose(hf); SetWindowText(g_edit, "(No output)");
+                    SetDlgItemText(hwnd, IDC_STATUS, "No output."); return; }
 
     /* Cap at 60000 bytes — _lread takes UINT on Win16 (max 65535); cap
      * also guards against the 16-bit int truncation on larger outputs. */
@@ -156,7 +158,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         int cw = (int)LOWORD(lp), ch = (int)HIWORD(lp);
         if (g_edit) MoveWindow(g_edit, 0, 0, cw, ch - 28, TRUE);
         if (GetDlgItem(hwnd, IDC_STATUS))
-            MoveWindow(GetDlgItem(hwnd,IDC_STATUS), 92, ch-22, cw-96, 18, TRUE);
+            MoveWindow(GetDlgItem(hwnd, IDC_STATUS), 92, ch-22, cw-96, 18, TRUE);
         return 0;
     }
     case WM_COMMAND:
@@ -188,12 +190,12 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev,
         wc.hInstance     = hInst;
         wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
         wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
-        wc.lpszClassName = "NS16Main";
+        wc.lpszClassName = "NSSMain";
         RegisterClass(&wc);
     }
 
-    hwnd = CreateWindow("NS16Main",
-        "netstat16  \xc6ldreC2  --  Active Connections",
+    hwnd = CreateWindow("NSSMain",
+        "net_stat  \xc6ldreC2  --  Active Connections",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 600, 400,
         NULL, NULL, hInst, NULL);

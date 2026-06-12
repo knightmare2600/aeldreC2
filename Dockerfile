@@ -4,7 +4,7 @@ LABEL description="ÆldreC2 build environment — OpenWatcom 2.0 + mingw-w64 Win
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# mingw windres for .rc compilation; Python + Pillow for win16ico.py
+# Build tools: mingw windres, Python + Pillow for win16ico.py
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates wget \
         gcc-mingw-w64-i686 \
@@ -12,6 +12,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip xz-utils zip \
     && pip3 install --no-cache-dir Pillow \
     && rm -rf /var/lib/apt/lists/*
+
+# Wine (32-bit) for running Win32 test binaries; pytest + requests for the test suite
+RUN dpkg --add-architecture i386 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends wine wine32 \
+    && pip3 install --no-cache-dir pytest requests \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pre-initialise the Wine prefix so tests don't stall on first run
+RUN WINEDEBUG=-all DISPLAY= wine wineboot --init 2>/dev/null || true
 
 # OpenWatcom 2.0 — Linux x86_64 snapshot
 # The tarball has a top-level "watcom/" directory; extracting to /opt/ gives /opt/watcom/
@@ -28,4 +38,4 @@ ENV PATH="${PATH}:/opt/watcom/binl64:/opt/watcom/binl"
 ENV INCLUDE="/opt/watcom/h:/opt/watcom/h/nt"
 
 WORKDIR /src/windows
-CMD ["wmake", "-f", "Makefile.wc", "dist"]
+CMD ["wmake", "-a", "-f", "Makefile.wc", "dist"]

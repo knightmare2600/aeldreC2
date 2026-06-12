@@ -32,6 +32,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "aeldre_theme.h"
 
 /* ------------------------------------------------------------------ */
 /* Constants                                                           */
@@ -61,8 +62,10 @@
 /* Globals                                                             */
 /* ------------------------------------------------------------------ */
 
-static HINSTANCE g_hinst = NULL;
-static HWND      g_hwnd  = NULL;
+static HINSTANCE g_hinst    = NULL;
+static HWND      g_hwnd     = NULL;
+static int       g_theme    = 0;
+static HBRUSH    g_bg_brush = NULL;
 static SOCKET    g_sock  = INVALID_SOCKET;
 static int       g_state = ST_IDLE;
 static char      g_host[256] = "";
@@ -178,6 +181,8 @@ static void process_server_line(const char *line)
                          g_host, w, h, bpp);
                 SetWindowText(g_hwnd, title);
             }
+            /* Force immediate repaint so the window stops showing "Connecting..." */
+            InvalidateRect(g_hwnd, NULL, TRUE);
         }
     } else if (strncmp(line, "FRAME ", 6) == 0) {
         g_frame_need = (DWORD)atol(line + 6);
@@ -280,6 +285,8 @@ static LRESULT CALLBACK ConnDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CREATE: {
         HFONT hf = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
         HWND hw; int y = 12;
+        g_theme    = aeldre_theme_load();
+        g_bg_brush = CreateSolidBrush(g_aeldre_themes[g_theme].bg);
         hw = CreateWindow("STATIC","Target host:", WS_CHILD|WS_VISIBLE|SS_LEFT, 8,y+3,100,18,hwnd,NULL,g_hinst,NULL);
         SendMessage(hw,WM_SETFONT,(WPARAM)hf,FALSE);
         g_cd_host = CreateWindow("EDIT",g_host[0]?g_host:"", WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL, 112,y,200,22,hwnd,(HMENU)IDC_HOST_ED,g_hinst,NULL);
@@ -316,6 +323,20 @@ static LRESULT CALLBACK ConnDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_CLOSE: g_cdlg_ok=0; DestroyWindow(hwnd); return 0;
     case WM_DESTROY: g_cdlg=NULL; if (!g_cdlg_ok) PostQuitMessage(0); return 0;
+    case WM_ERASEBKGND: {
+        HDC hdc=(HDC)wp; RECT rc;
+        GetClientRect(hwnd,&rc); FillRect(hdc,&rc,g_bg_brush); return 1;
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc=(HDC)wp; const AeldreTheme *t=&g_aeldre_themes[g_theme];
+        SetTextColor(hdc,t->body); SetBkColor(hdc,t->bg); return (LRESULT)g_bg_brush;
+    }
+    case WM_CTLCOLOREDIT: {
+        HDC hdc=(HDC)wp; const AeldreTheme *t=&g_aeldre_themes[g_theme];
+        SetTextColor(hdc,t->body); SetBkColor(hdc,t->bg); return (LRESULT)g_bg_brush;
+    }
+    case WM_CTLCOLORBTN:
+        SetBkColor((HDC)wp,g_aeldre_themes[g_theme].bg); return (LRESULT)g_bg_brush;
     }
     return DefWindowProc(hwnd,msg,wp,lp);
 }
@@ -448,6 +469,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
 
+    case WM_ERASEBKGND:
+        if (g_bg_brush) {
+            HDC hdc=(HDC)wp; RECT rc;
+            GetClientRect(hwnd,&rc); FillRect(hdc,&rc,g_bg_brush); return 1;
+        }
+        return 0;
     case WM_CLOSE:
         srv_send("QUIT\n");
         do_disconnect();
@@ -455,6 +482,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
 
     case WM_DESTROY:
+        if (g_bg_brush) { DeleteObject(g_bg_brush); g_bg_brush = NULL; }
         if (g_frame_cur)  GlobalFree((HGLOBAL)g_frame_cur);
         if (g_frame_prev) GlobalFree((HGLOBAL)g_frame_prev);
         if (g_rle_accum)  GlobalFree((HGLOBAL)g_rle_accum);

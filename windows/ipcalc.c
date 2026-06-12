@@ -22,6 +22,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef IPC_WIN16
+#include "aeldre_theme.h"
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Win16 / Win32 portability                                          */
@@ -376,6 +379,10 @@ static void write_to_handle(HANDLE h, const char *text)
 static HINSTANCE g_hinst  = NULL;
 static char      g_save_filename[MAX_PATH];
 static HWND      g_save_dlg = NULL;
+#ifndef IPC_WIN16
+static int       g_theme    = 0;
+static HBRUSH    g_bg_brush = NULL;
+#endif
 
 LRESULT CALLBACK WINCB SaveDlgProc(HWND hwnd, UINT msg,
                                     WPARAM wp, LPARAM lp)
@@ -383,6 +390,12 @@ LRESULT CALLBACK WINCB SaveDlgProc(HWND hwnd, UINT msg,
     int id, code;
     switch (msg) {
     case WM_CREATE:
+#ifndef IPC_WIN16
+        if (!g_bg_brush) {
+            g_theme    = aeldre_theme_load();
+            g_bg_brush = CreateSolidBrush(g_aeldre_themes[g_theme].bg);
+        }
+#endif
         SetWindowText(hwnd, "Save Results");
         CreateWindow("STATIC", "Filename:",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
@@ -418,6 +431,22 @@ LRESULT CALLBACK WINCB SaveDlgProc(HWND hwnd, UINT msg,
     case WM_DESTROY:
         g_save_dlg = NULL;
         return 0;
+#ifndef IPC_WIN16
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wp; RECT rc;
+        GetClientRect(hwnd, &rc); FillRect(hdc, &rc, g_bg_brush); return 1;
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc=(HDC)wp; const AeldreTheme *t=&g_aeldre_themes[g_theme];
+        SetTextColor(hdc,t->body); SetBkColor(hdc,t->bg); return (LRESULT)g_bg_brush;
+    }
+    case WM_CTLCOLOREDIT: {
+        HDC hdc=(HDC)wp; const AeldreTheme *t=&g_aeldre_themes[g_theme];
+        SetTextColor(hdc,t->body); SetBkColor(hdc,t->bg); return (LRESULT)g_bg_brush;
+    }
+    case WM_CTLCOLORBTN:
+        SetBkColor((HDC)wp,g_aeldre_themes[g_theme].bg); return (LRESULT)g_bg_brush;
+#endif
     }
     return DefWindowProc(hwnd, msg, wp, lp);
 }
@@ -549,6 +578,10 @@ LRESULT CALLBACK WINCB IpcWndProc(HWND hwnd, UINT msg,
     switch (msg) {
     case WM_CREATE: {
         HWND h;
+#ifndef IPC_WIN16
+        g_theme    = aeldre_theme_load();
+        g_bg_brush = CreateSolidBrush(g_aeldre_themes[g_theme].bg);
+#endif
         /* row 1: label + input + Calc */
         CreateWindow("STATIC", "Address:",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
@@ -619,8 +652,27 @@ LRESULT CALLBACK WINCB IpcWndProc(HWND hwnd, UINT msg,
         return 0;
 
     case WM_DESTROY:
+#ifndef IPC_WIN16
+        if (g_bg_brush) { DeleteObject(g_bg_brush); g_bg_brush = NULL; }
+#endif
         PostQuitMessage(0);
         return 0;
+#ifndef IPC_WIN16
+    case WM_ERASEBKGND: {
+        HDC hdc=(HDC)wp; RECT rc;
+        GetClientRect(hwnd,&rc); FillRect(hdc,&rc,g_bg_brush); return 1;
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc=(HDC)wp; const AeldreTheme *t=&g_aeldre_themes[g_theme];
+        SetTextColor(hdc,t->body); SetBkColor(hdc,t->bg); return (LRESULT)g_bg_brush;
+    }
+    case WM_CTLCOLOREDIT: {
+        HDC hdc=(HDC)wp; const AeldreTheme *t=&g_aeldre_themes[g_theme];
+        SetTextColor(hdc,t->body); SetBkColor(hdc,t->bg); return (LRESULT)g_bg_brush;
+    }
+    case WM_CTLCOLORBTN:
+        SetBkColor((HDC)wp,g_aeldre_themes[g_theme].bg); return (LRESULT)g_bg_brush;
+#endif
     }
     return DefWindowProc(hwnd, msg, wp, lp);
 }
@@ -678,7 +730,9 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev,
     HWND     hwnd;
     MSG      msg;
     char    *target_arg  = NULL;
+    char    *mask_arg    = NULL;
     char    *outfile_arg = NULL;
+    static char combined_target[256];
     int      i;
 
     (void)hPrev;
@@ -696,6 +750,15 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev,
             outfile_arg = my_argv[++i];
         else if (my_argv[i][0] != '-' && !target_arg)
             target_arg = my_argv[i];
+        else if (my_argv[i][0] != '-' && !mask_arg)
+            mask_arg = my_argv[i];
+    }
+
+    /* Two positional args: "192.168.1.0" "255.255.255.0" → join with space */
+    if (target_arg && mask_arg) {
+        snprintf(combined_target, sizeof(combined_target),
+                 "%s %s", target_arg, mask_arg);
+        target_arg = combined_target;
     }
 
     /* CLI mode ---------------------------------------------------- */
@@ -716,33 +779,19 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev,
             write_to_file(outfile_arg, text);
 
 #ifndef IPC_WIN16
-        /* Win32: write to stdout if redirected */
+        /* Win32: always write to stdout; exit headless if it is not a real
+           console (i.e. stdout is a pipe or captured by a parent process). */
         {
-            HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-            if (h && h != INVALID_HANDLE_VALUE) {
-                DWORD mode = 0;
-                int is_console = GetConsoleMode(h, &mode);
-                /* write if redirected (pipe/file); skip if raw console
-                   since we're about to show the GUI anyway */
-                if (!is_console)
-                    write_to_handle(h, text);
-                else if (!outfile_arg)
-                    write_to_handle(h, text);  /* console + no -o: still print */
-            }
-        }
-#endif
-        /* if -o only (no GUI wanted when fully scripted), skip window */
-        if (outfile_arg) {
-#ifndef IPC_WIN16
-            HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+            HANDLE h    = GetStdHandle(STD_OUTPUT_HANDLE);
             DWORD  mode = 0;
-            if (!h || h == INVALID_HANDLE_VALUE ||
-                (!GetConsoleMode(h, &mode)))
-                return 0;   /* redirected: headless */
-#else
-            return 0;       /* Win16 + -o: always headless */
-#endif
+            if (h && h != INVALID_HANDLE_VALUE)
+                write_to_handle(h, text);
+            if (!h || h == INVALID_HANDLE_VALUE || !GetConsoleMode(h, &mode))
+                return 0;   /* stdout piped/captured — no GUI needed */
         }
+#endif
+        if (outfile_arg)
+            return 0;   /* -o specified: caller wants headless output only */
 
         /* fall through: show GUI with pre-computed result */
         memcpy(&g_info, &info, sizeof(info));

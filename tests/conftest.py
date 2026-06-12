@@ -51,18 +51,35 @@ def exe_path(name):
     return os.path.join(WINDOWS_DIR, name)
 
 
+def wine_env(extra=None):
+    """
+    Build a clean environment dict for running Wine binaries.
+
+    Key settings:
+    - WINEDEBUG=-all     suppresses Wine's verbose fixme/err chatter
+    - WINEDLLOVERRIDES   uses Wine's built-in secur32 so the binary
+                         starts even when a native Windows secur32.dll
+                         is absent — fixes the 'SECUR32.DLL not found'
+                         error seen when running outside a configured
+                         Wine prefix
+    - DISPLAY=""         headless; GUI apps need Xvfb or DISPLAY=:N
+    """
+    env = os.environ.copy()
+    env["WINEDEBUG"] = "-all"
+    env["WINEDLLOVERRIDES"] = "secur32=b;advapi32=b"
+    env.setdefault("DISPLAY", "")
+    if extra:
+        env.update(extra)
+    return env
+
+
 def wine_run(wine_bin, *args, timeout=15, env=None, **kwargs):
-    base_env = os.environ.copy()
-    base_env.setdefault("WINEDEBUG", "-all")
-    base_env.setdefault("DISPLAY", "")
-    if env:
-        base_env.update(env)
     return subprocess.run(
         [wine_bin, *args],
         capture_output=True,
-        text=True,
+        encoding="latin-1",   # Windows apps output CP1252, not UTF-8
         timeout=timeout,
-        env=base_env,
+        env=wine_env(env),
         **kwargs,
     )
 

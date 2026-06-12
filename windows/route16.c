@@ -86,6 +86,8 @@ static void do_run(HWND hwnd)
     }
     fsz = _llseek(hf, 0, 2);
     _llseek(hf, 0, 0);
+    if (fsz <= 0) { _lclose(hf); SetWindowText(g_edit, "(No output)");
+                    SetDlgItemText(hwnd, IDC_STATUS, "No output."); return; }
 
     { unsigned int bsz = (fsz > 60000L) ? 60000u : (unsigned int)fsz;
     buf = malloc(bsz + 4);

@@ -3,126 +3,165 @@ C2 protocol test suite — Tank implant ↔ Joshua controller.
 
 Strategy
 --------
-We build a special test implant (tank_test.exe) at test time with the C2
-host/port pointed at a local mock server, then run it under Wine and
-verify the wire protocol.
+Build a test implant (tank_test.exe) at test time with C2HOST=127.0.0.1,
+C2PORT=<free-port>, and TANK_C2_KEY=DEADBEEF.  Run it under Wine against
+a Python mock server that speaks enough of the Joshua wire protocol to
+receive the Tank/1 banner and reply to basic commands.
 
-Because the full build environment (Docker / OpenWatcom) may not be
-present on the test host, these tests are grouped under the
-``c2_integration`` mark and are skipped when:
-  - Wine is not available, or
-  - The test implant cannot be built (Docker not available), or
-  - The ``C2_INTEGRATION`` environment variable is not set to "1"
+Gate
+----
+Set C2_INTEGRATION=1 to run these tests.  They require:
+  - Docker (to build the test implant)
+  - Wine (to run tank.exe)
+  - aeldrec2-builder image (docker build -t aeldrec2-builder .)
 
 To run locally:
     C2_INTEGRATION=1 pytest tests/test_c2_protocol.py -v
 
-Protocol (derived from tank.c / joshua.c)
-------------------------------------------
-After TCP connect, Tank sends an initial HELLO/SYSINFO message.  The
-exact wire format is documented in the source; the tests check what
-can be observed at the socket level without a full codec.
-
-TODO: fill in exact message framing once the protocol spec is finalised.
+Protocol (from tank.c)
+----------------------
+After connect, Tank immediately sends:
+    Tank/1 host=<hostname> os=<major>.<minor>.<build> shell=<path> key=<8hex>\n
+Then blocks waiting for commands.  Commands are newline-terminated.
+Responses end with <<<DONE>>>\n.
 """
 
 import os
+import re
 import socket
-import struct
 import subprocess
 import threading
 import time
 
 import pytest
-from conftest import AcceptServer, exe_path, free_port, wine_run
+from conftest import AcceptServer, exe_path, free_port, wine_env
 
 INTEGRATION = os.environ.get("C2_INTEGRATION", "0") == "1"
 skip_unless_integration = pytest.mark.skipif(
     not INTEGRATION, reason="set C2_INTEGRATION=1 to run C2 protocol tests"
 )
 
+# Known test key — baked into the test implant at build time
+TEST_KEY = "DEADBEEF"
+DOCKER_IMAGE = "aeldrec2-builder"
+
 
 # ------------------------------------------------------------------
-# Build a test implant pointing at localhost
+# Build a test implant pointing at localhost with a known key
 # ------------------------------------------------------------------
 
-def build_test_implant(port, tmp_path):
+def _inside_docker():
+    return os.path.exists("/.dockerenv")
+
+
+def build_test_implant(port, tmp_path, key=TEST_KEY):
     """
-    Build tank.exe with C2HOST=127.0.0.1 and C2PORT=<port> using Docker.
-    Returns path to the output binary, or None if the build fails.
+    Build tank.exe with C2HOST=127.0.0.1, C2PORT=<port>, TANK_C2_KEY=<key>.
+    Returns path to output binary, or None if the build fails.
+
+    When running inside the builder container (/.dockerenv exists) wmake is
+    already on PATH and /src is the repo — no docker-in-docker needed.
+    From the host, the build runs via docker run as before.
+
+    Either way, windows/tank.exe is saved before the build and restored
+    afterward so smoke tests keep the default 127.0.0.1:4444 / 00000000 binary.
     """
-    out = tmp_path / "tank_test.exe"
-    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    cmd = [
-        "docker", "run", "--rm",
-        "-v", f"{repo}:/src",
-        "-w", "/src/windows",
-        "putty-win32s-builder",
-        "wmake", "-f", "Makefile.wc", "tank.exe",
-        f'XFLAGS=-DTANK_C2_HOST=\\"127.0.0.1\\" -DTANK_C2_PORT={port}',
-    ]
-    r = subprocess.run(cmd, capture_output=True, timeout=120)
-    if r.returncode != 0:
-        return None
-    src = os.path.join(repo, "windows", "tank.exe")
-    os.rename(src, str(out))
-    return str(out)
+    import shutil
+
+    out   = tmp_path / "tank_test.exe"
+    repo  = "/src" if _inside_docker() else os.path.abspath(
+                os.path.join(os.path.dirname(__file__), ".."))
+    src   = os.path.join(repo, "windows", "tank.exe")
+
+    # Save original
+    backup = None
+    if os.path.exists(src):
+        backup = tmp_path / "tank_orig.exe"
+        shutil.copy2(src, str(backup))
+
+    xflags = (f"-DTANK_C2_HOST=127.0.0.1"
+              f" -DTANK_C2_PORT={port}"
+              f" -DTANK_C2_KEY={key}")
+
+    if _inside_docker():
+        cmd = ["wmake", "-a", "-f", "Makefile.wc", "tank.exe", f"XFLAGS={xflags}"]
+        r = subprocess.run(cmd, capture_output=True, timeout=180,
+                           cwd=os.path.join(repo, "windows"))
+    else:
+        cmd = [
+            "docker", "run", "--rm",
+            "-v", f"{repo}:/src", "-w", "/src/windows",
+            DOCKER_IMAGE,
+            "wmake", "-a", "-f", "Makefile.wc", "tank.exe",
+            f"XFLAGS={xflags}",
+        ]
+        r = subprocess.run(cmd, capture_output=True, timeout=180)
+
+    built = os.path.exists(src) and r.returncode == 0
+    if built:
+        shutil.copy2(src, str(out))
+
+    # Always restore original
+    if backup and os.path.exists(str(backup)):
+        shutil.copy2(str(backup), src)
+
+    return str(out) if built else None
 
 
 # ------------------------------------------------------------------
-# Mock Joshua listener
+# Mock Joshua server that speaks the wire protocol
 # ------------------------------------------------------------------
 
 class MockJoshua:
     """
-    Accepts one Tank connection, exchanges handshake, records messages.
+    Accepts one Tank connection.
 
-    The exact Tank wire protocol:
-      - After connect, tank sends a length-prefixed or newline-terminated
-        SYSINFO block (TODO: confirm exact framing from tank.c).
-      - Joshua responds with a command or a keep-alive.
-
-    For now we just capture raw bytes and assert that *something* was sent.
+    Protocol:
+      Tank → Server:  Tank/1 host=X os=Y shell=Z key=K\\n
+      Server does nothing further (tank blocks waiting for commands).
+      Server closes after collecting the banner.
     """
 
-    def __init__(self, port=None, response=b""):
+    TEST_KEY = TEST_KEY
+
+    def __init__(self, port=None):
         self.port = port or free_port()
-        self.messages = []
+        self.banner = b""
         self.connected = threading.Event()
-        self._response = response
         self._srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._srv.bind(("127.0.0.1", self.port))
         self._srv.listen(1)
-        self._srv.settimeout(15)
+        self._srv.settimeout(20)
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
 
     def _serve(self):
         try:
-            conn, addr = self._srv.accept()
+            conn, _ = self._srv.accept()
             self.connected.set()
-            conn.settimeout(5)
-            if self._response:
-                conn.sendall(self._response)
+            conn.settimeout(8)
             buf = b""
             try:
-                while True:
-                    chunk = conn.recv(4096)
+                while b"\n" not in buf:
+                    chunk = conn.recv(1024)
                     if not chunk:
                         break
                     buf += chunk
             except (socket.timeout, ConnectionResetError):
                 pass
-            self.messages.append(buf)
+            self.banner = buf
             conn.close()
         except socket.timeout:
             pass
         finally:
             self._srv.close()
 
-    def wait_connect(self, timeout=10):
+    def wait_connect(self, timeout=15):
         return self.connected.wait(timeout)
+
+    def banner_str(self):
+        return self.banner.decode("ascii", errors="replace")
 
 
 # ------------------------------------------------------------------
@@ -131,16 +170,16 @@ class MockJoshua:
 
 @skip_unless_integration
 def test_tank_connects_to_c2(wine, tmp_path):
-    """tank.exe should establish a TCP connection to the configured C2 host."""
+    """tank.exe must establish a TCP connection to the configured C2 host."""
     srv = MockJoshua()
     implant = build_test_implant(srv.port, tmp_path)
     if implant is None:
-        pytest.skip("Could not build test implant (Docker not available?)")
+        pytest.skip(f"Could not build test implant (Docker / {DOCKER_IMAGE} not available?)")
 
     proc = subprocess.Popen(
         [wine, implant],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        env={**os.environ, "WINEDEBUG": "-all", "DISPLAY": ""},
+        env=wine_env(),
     )
     connected = srv.wait_connect(timeout=15)
     proc.terminate()
@@ -153,8 +192,8 @@ def test_tank_connects_to_c2(wine, tmp_path):
 
 
 @skip_unless_integration
-def test_tank_sends_initial_data(wine, tmp_path):
-    """Tank should send something immediately after connecting (SYSINFO / banner)."""
+def test_tank_sends_banner(wine, tmp_path):
+    """Tank must send a Tank/1 banner immediately after connecting."""
     srv = MockJoshua()
     implant = build_test_implant(srv.port, tmp_path)
     if implant is None:
@@ -163,28 +202,25 @@ def test_tank_sends_initial_data(wine, tmp_path):
     proc = subprocess.Popen(
         [wine, implant],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        env={**os.environ, "WINEDEBUG": "-all", "DISPLAY": ""},
+        env=wine_env(),
     )
     srv.wait_connect(timeout=15)
-    time.sleep(3)       # let the implant send its banner
+    time.sleep(2)
     proc.terminate()
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
 
-    assert srv.messages, "Tank connected but sent no data"
-    assert len(srv.messages[0]) > 0, "Tank sent empty message"
+    banner = srv.banner_str()
+    assert banner.startswith("Tank/1 "), (
+        f"Expected banner starting with 'Tank/1 ', got: {banner!r}"
+    )
 
 
 @skip_unless_integration
-def test_tank_banner_contains_os_info(wine, tmp_path):
-    """
-    The SYSINFO message should contain recognisable OS/hostname information.
-
-    TODO: once the exact framing (length prefix, delimiter) is confirmed,
-    decode the message properly and assert specific fields.
-    """
+def test_tank_banner_fields(wine, tmp_path):
+    """Banner must contain host=, os=, shell=, and key= fields."""
     srv = MockJoshua()
     implant = build_test_implant(srv.port, tmp_path)
     if implant is None:
@@ -193,66 +229,106 @@ def test_tank_banner_contains_os_info(wine, tmp_path):
     proc = subprocess.Popen(
         [wine, implant],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        env={**os.environ, "WINEDEBUG": "-all", "DISPLAY": ""},
+        env=wine_env(),
     )
     srv.wait_connect(timeout=15)
-    time.sleep(3)
+    time.sleep(2)
     proc.terminate()
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
 
-    if not srv.messages:
-        pytest.skip("No data received (connection may have failed)")
+    banner = srv.banner_str()
+    assert "host=" in banner,  f"No host= in banner: {banner!r}"
+    assert "os="   in banner,  f"No os= in banner: {banner!r}"
+    assert "shell=" in banner, f"No shell= in banner: {banner!r}"
+    assert " key=" in banner,  f"No key= in banner: {banner!r}"
 
-    raw = srv.messages[0]
-    # Under Wine the OS will report something Windows-like
-    # TODO: decode framing and check hostname / OS version fields
-    assert len(raw) >= 4, f"Initial message too short ({len(raw)} bytes)"
+    # Key must match what we baked into the implant
+    m = re.search(r" key=([0-9A-Fa-f]{8})", banner)
+    assert m, f"key= field missing or malformed in banner: {banner!r}"
+    assert m.group(1).upper() == TEST_KEY.upper(), (
+        f"Banner key {m.group(1)!r} != expected {TEST_KEY!r}"
+    )
+
+
+@skip_unless_integration
+def test_tank_banner_os_is_windows(wine, tmp_path):
+    """os= field must look like a Windows version (digits.digits.digits)."""
+    srv = MockJoshua()
+    implant = build_test_implant(srv.port, tmp_path)
+    if implant is None:
+        pytest.skip("Could not build test implant")
+
+    proc = subprocess.Popen(
+        [wine, implant],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=wine_env(),
+    )
+    srv.wait_connect(timeout=15)
+    time.sleep(2)
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+    banner = srv.banner_str()
+    m = re.search(r"os=(\d+\.\d+)", banner)
+    assert m, f"os= field not in expected format in banner: {banner!r}"
 
 
 # ------------------------------------------------------------------
-# Non-integration: verify the binary protocol constants are sane
+# Non-integration: sanity checks on built binary
 # ------------------------------------------------------------------
 
-def test_magic_block_fits_in_exe():
-    """Sanity: the CLU magic + config block fits within tank.exe."""
-    import os
+def test_tank_exe_exists():
+    path = exe_path("tank.exe")
+    assert os.path.exists(path), "tank.exe not built — run docker build first"
+
+
+def test_tank16_exe_exists():
+    path = exe_path("tank16.exe")
+    assert os.path.exists(path), "tank16.exe not built"
+
+
+def test_clu_magic_in_tank():
+    """CLU config block must be present and have the correct layout."""
     path = exe_path("tank.exe")
     if not os.path.exists(path):
         pytest.skip("tank.exe not built")
-    size = os.path.getsize(path)
-    assert size > 128, f"tank.exe suspiciously small ({size} bytes)"
+    with open(path, "rb") as f:
+        data = f.read()
+    magic = b"AELDRECLU0001"
+    pos = data.find(magic)
+    assert pos >= 0, "CLU magic not found in tank.exe"
+    # Block layout: 14 magic + 64 host + 2 port + 1 tls + 9 key = 90 bytes
+    assert pos + 90 <= len(data), "CLU block extends past end of file"
 
 
-def test_tank16_binary_is_ne_format():
-    """tank16.exe must be a Windows NE (16-bit) executable, not PE."""
-    import os
+def test_clu_magic_in_tank16():
+    """CLU config block must be present in tank16.exe."""
     path = exe_path("tank16.exe")
     if not os.path.exists(path):
         pytest.skip("tank16.exe not built")
     with open(path, "rb") as f:
-        mz = f.read(2)
-        assert mz == b"MZ", "Not an MZ executable"
-        f.seek(0x3C)
-        pe_offset = struct.unpack("<H", f.read(2))[0]
-        f.seek(pe_offset)
-        sig = f.read(2)
-    assert sig == b"NE", f"Expected NE sig at 0x{pe_offset:x}, got {sig!r}"
+        data = f.read()
+    magic = b"AELDRECLU0001"
+    assert data.find(magic) >= 0, "CLU magic not found in tank16.exe"
 
 
-def test_tank32_binary_is_pe_format():
-    """tank.exe must be a Windows PE (32-bit) executable."""
-    import os
+def test_clu_default_key_is_zeros():
+    """Default tank.exe key field must be 00000000 (unpatched)."""
     path = exe_path("tank.exe")
     if not os.path.exists(path):
         pytest.skip("tank.exe not built")
     with open(path, "rb") as f:
-        mz = f.read(2)
-        assert mz == b"MZ"
-        f.seek(0x3C)
-        pe_offset = struct.unpack("<I", f.read(4))[0]
-        f.seek(pe_offset)
-        sig = f.read(4)
-    assert sig == b"PE\x00\x00", f"Expected PE sig, got {sig!r}"
+        data = f.read()
+    pos = data.find(b"AELDRECLU0001")
+    assert pos >= 0
+    # offset 81 from magic = key field
+    key_bytes = data[pos + 81 : pos + 89]
+    assert key_bytes == b"00000000", (
+        f"Expected default key '00000000', got {key_bytes!r}"
+    )

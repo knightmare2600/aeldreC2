@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # build-c2.sh — build AeldreC2 C2 components using the aeldrec2-builder Docker image
 #
 # Usage:
@@ -17,11 +17,15 @@
 #
 # Both:
 #   C2HOST=10.0.0.1 RECOGNIZER=1 ./build-c2.sh tank
+#
+# Full compiler output is always written to build.log in the repo root.
+# Only errors, warnings and notes are printed to the terminal.
 
 set -e
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
 IMG="aeldrec2-builder"
+BUILD_LOG="$REPO/build.log"
 
 # Build XFLAGS from env vars
 XFLAGS=""
@@ -37,23 +41,59 @@ fi
 XFLAGS="${XFLAGS# }"  # strip leading space
 
 run() {
-    echo ">>> $*"
+    local rc=0
+    local tmplog
+    tmplog=$(mktemp)
+
+    printf ">>> %s  " "$*"
+    printf "\n=== %s ===\n" "$*" >> "$BUILD_LOG"
+
     if [ -n "$XFLAGS" ]; then
         docker run --rm \
             -v "$REPO:/src" \
             -w /src/windows \
             "$IMG" \
-            wmake -f Makefile.wc "$@" "XFLAGS=$XFLAGS"
+            wmake -f Makefile.wc "$@" "XFLAGS=$XFLAGS" >> "$tmplog" 2>&1 \
+            && rc=0 || rc=$?
     else
         docker run --rm \
             -v "$REPO:/src" \
             -w /src/windows \
             "$IMG" \
-            wmake -f Makefile.wc "$@"
+            wmake -f Makefile.wc "$@" >> "$tmplog" 2>&1 \
+            && rc=0 || rc=$?
     fi
+
+    cat "$tmplog" >> "$BUILD_LOG"
+
+    if [ $rc -eq 0 ]; then
+        echo "ok"
+    else
+        echo "FAILED (full log: $BUILD_LOG)"
+        grep -E 'Error|Warning!|Note!' "$tmplog" || true
+    fi
+
+    rm -f "$tmplog"
+    return $rc
 }
 
 TARGET="${1:-c2}"
+
+# Reset log for this build session
+> "$BUILD_LOG"
+
+# ----------------------------------------------------------------
+# Helper: run pytest inside the builder container
+# ----------------------------------------------------------------
+run_tests_in_docker() {
+    echo ""
+    printf ">>> Running test suite inside container...\n"
+    docker run --rm \
+        -v "$REPO:/src" \
+        -e "C2_INTEGRATION=${C2_INTEGRATION:-1}" \
+        "$IMG" \
+        sh -c 'cd /src && python3 -m pytest tests/ -v --tb=short'
+}
 
 case "$TARGET" in
     c2)
@@ -83,6 +123,19 @@ case "$TARGET" in
         echo "Bundling..."
         docker run --rm -v "$REPO":/src -w /src openwatcom/owtools:latest \
             python3 tools/mksetup.py
+        ;;
+    test)
+        # Build image, build all binaries, run test suite — all inside Docker
+        docker build -t "$IMG" "$REPO"
+        docker run --rm \
+            -v "$REPO:/src" \
+            -e "C2_INTEGRATION=${C2_INTEGRATION:-1}" \
+            "$IMG" \
+            sh -c 'wmake -a -f Makefile.wc dist && cd /src && python3 -m pytest tests/ -v --tb=short'
+        ;;
+    test-only)
+        # Run tests against already-built binaries — no build, no image rebuild
+        run_tests_in_docker
         ;;
     all)
         # full PuTTY + C2 suite — slow

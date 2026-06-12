@@ -427,15 +427,15 @@ OBJ_ROOTSHARED = &
 # Default target
 # =================================================================
 
-all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe ncnt.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe clip16.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe netstat.exe route.exe netstat16.exe route16.exe setup16.exe .SYMBOLIC
+all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.exe winsftp.exe ncwfw.exe ncnt.exe joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe clip16.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe netstatN.exe "net-stat.exe" net_stat.exe route.exe route16.exe setup16.exe lman16.exe nc16.exe grid16.exe grid32.exe gridnt.exe .SYMBOLIC
 
-win32s: pageant.exe putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe ipcalc16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe setup16.exe setup32.exe .SYMBOLIC
+win32s: pageant.exe putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe ipcalc16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe markuped.exe wget.exe wget16.exe flynn.exe setup16.exe setup32.exe .SYMBOLIC
 
 dist: all .SYMBOLIC
 	sh -c "mkdir -p ../output/compiled ../output/exe"
 	python3 ../tools/mksetup.py --out16 output/exe/setup16.exe --out32 output/exe/setup32.exe
 	python3 ../help/mkhlp.py ../output/compiled/aeldreC2.HLP
-	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe clip16.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe netstat.exe route.exe netstat16.exe route16.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
+	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe clip16.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe netstatN.exe "net-stat.exe" net_stat.exe route.exe route16.exe lman16.exe nc16.exe grid16.exe grid32.exe gridnt.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
 	sh -c "cd ../output && zip -9 -j aeldrec2-tools.zip compiled/*.exe compiled/*.dll compiled/aeldreC2.HLP exe/setup16.exe exe/setup32.exe ../README.md && echo 'Created: output/aeldrec2-tools.zip'"
 
 # =================================================================
@@ -446,17 +446,18 @@ dist: all .SYMBOLIC
 # dist-all   : all three platform folders
 # =================================================================
 
-dist-wfw: tank16.exe netstat16.exe route16.exe ipcalc16.exe wget16.exe yori16.exe setup16.exe clip16.exe .SYMBOLIC
+dist-wfw: tank16.exe net_stat.exe route16.exe ipcalc16.exe wget16.exe yori16.exe setup16.exe clip16.exe lman16.exe nc16.exe grid16.exe .SYMBOLIC
 	sh -c "mkdir -p ../output/wfw"
-	cp tank16.exe netstat16.exe route16.exe ipcalc16.exe wget16.exe yori16.exe setup16.exe clip16.exe ../output/wfw/
+	cp tank16.exe net_stat.exe route16.exe ipcalc16.exe wget16.exe yori16.exe setup16.exe clip16.exe lman16.exe nc16.exe grid16.exe ../output/wfw/
 
-dist-win32: joshua.exe tank.exe clu.exe lightman.exe flynn.exe ncwfw.exe grid.exe clip.exe wget.exe ipcalc32.exe markuped.exe yori32.exe jloshtog.exe setup32.exe .SYMBOLIC
+dist-win32: joshua.exe tank.exe clu.exe flynn.exe ncwfw.exe grid.exe clip.exe wget.exe ipcalc32.exe markuped.exe yori32.exe jloshtog.exe setup32.exe "net-stat.exe" aelctl.dll .SYMBOLIC
 	sh -c "mkdir -p ../output/win32s"
-	cp joshua.exe tank.exe clu.exe lightman.exe flynn.exe ncwfw.exe grid.exe clip.exe wget.exe ipcalc32.exe markuped.exe yori32.exe jloshtog.exe setup32.exe ../output/win32s/
+	cp joshua.exe tank.exe clu.exe flynn.exe ncwfw.exe grid.exe clip.exe wget.exe ipcalc32.exe markuped.exe yori32.exe jloshtog.exe setup32.exe "net-stat.exe" aelctl.dll ../output/win32s/
+	cp ../dist/COMDLG32.DLL ../dist/WSOCK32.DLL ../output/win32s/
 
-dist-nt: gridcli.exe ncnt.exe netstat.exe route.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe timestmp.exe yoriview.exe dumont.exe .SYMBOLIC
+dist-nt: gridcli.exe ncnt.exe netstatN.exe route.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe timestmp.exe yoriview.exe dumont.exe lightman.exe grid32.exe gridnt.exe .SYMBOLIC
 	sh -c "mkdir -p ../output/nt"
-	cp gridcli.exe ncnt.exe netstat.exe route.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe timestmp.exe yoriview.exe dumont.exe ../output/nt/
+	cp gridcli.exe ncnt.exe netstatN.exe route.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe timestmp.exe yoriview.exe dumont.exe lightman.exe grid32.exe gridnt.exe ../output/nt/
 
 dist-all: dist-wfw dist-win32 dist-nt .SYMBOLIC
 
@@ -798,6 +799,20 @@ tank16.exe: tank16.obj tank16.res
 	wlink system windows name $@ file tank16.obj library winsock.lib
 	wrc tank16.res $@
 
+# lman16.exe -- Lightman Win16 CLI operator client (WFW 3.11 DOS Prompt)
+lman16.obj: lman16.c
+	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ lman16.c
+
+lman16.exe: lman16.obj
+	wlink system windows name $@ file lman16.obj library winsock.lib
+
+# nc16.exe -- Win16 netcat pivot tool (WFW 3.11, deployed on target)
+nc16.obj: nc16.c
+	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ nc16.c
+
+nc16.exe: nc16.obj
+	wlink system windows name $@ file nc16.obj library winsock.lib
+
 # =================================================================
 # clu.exe -- CLU implant generator (Win32, patches tank.exe / tank16.exe)
 # =================================================================
@@ -831,6 +846,27 @@ grid.exe: grid.obj grid.res
 # gridcli.exe -- console port scanner (.exe rule with icon is in NT-tools section)
 gridcli.obj: gridcli.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c gridcli.c
+
+# grid16.exe -- Win16 console port scanner (WFW 3.11 COMMAND.COM)
+grid16.obj: grid16.c
+	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ grid16.c
+
+grid16.exe: grid16.obj
+	wlink system windows name $@ file grid16.obj library winsock.lib
+
+# grid32.exe -- Win32 console scanner (Win95 + NT, deployable on target)
+grid32.obj: grid32.c
+	$(CTOOL_CC) -c $(XFLAGS) -fo=$@ grid32.c
+
+grid32.exe: grid32.obj
+	$(CTOOL_CC) $(NT_STUB) -fe=$@ $(LDFLAGS) grid32.obj wsock32.lib
+
+# gridnt.exe -- NT-specific console scanner (operator workstation, coloured output)
+gridnt.obj: gridnt.c
+	$(CTOOL_CC) -c $(XFLAGS) -fo=$@ gridnt.c
+
+gridnt.exe: gridnt.obj ntstub.exe
+	$(CTOOL_CC) $(NT_STUB) -fe=$@ $(LDFLAGS) gridnt.obj wsock32.lib
 
 # =================================================================
 # ipcalc32.exe -- Win32s/Win32 IP subnet calculator (GUI, no sockets)
@@ -908,8 +944,8 @@ lightman.obj: lightman.c
 lightman.res: lightman.rc lightman.ico
 	$(RCPATH) $(RCFLAGS) lightman.rc -o lightman.res
 
-lightman.exe: lightman.obj lightman.res
-	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) lightman.obj wsock32.lib
+lightman.exe: lightman.obj lightman.res ntstub.exe
+	$(CC) -bt=nt -l=nt $(NT_STUB) -fe=$@ $(LDFLAGS) lightman.obj wsock32.lib
 	wrc lightman.res $@
 
 # =================================================================
@@ -1862,23 +1898,35 @@ gridcli.exe: gridcli.obj gridcli.res ntstub.exe
 	wrc gridcli.res $@
 
 # =================================================================
-# netstat.exe / route.exe -- Win32 console network diagnostics
-#   NT4+/Win95: native via iphlpapi.dll
-#   NT 3.x    : falls back to exec system netstat/route
-#   Win32s    : prints a clear "not available" message
-# netstat16.exe / route16.exe -- Win16 GUI wrappers for WFW 3.11
-#   Exec COMMAND.COM /c netstat|route and display output in a dialog
+# netstatN.exe -- NT 3.1+ console netstat (iphlpapi or exec fallback)
+# net-stat.exe -- Win9x / Win32s GUI dialog netstat (iphlpapi or COMMAND.COM fallback)
+# net_stat.exe -- Win16 WFW 3.11 GUI dialog netstat (COMMAND.COM exec)
+# route.exe    -- NT 3.1+ console route table
+# route16.exe  -- Win16 WFW 3.11 GUI dialog route table
 # =================================================================
 
-netstat.obj: netstat.c
-	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c netstat.c
+netstatN.obj: netstatN.c
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c netstatN.c
 
 netstat.res: netstat.rc ncnt.ico
 	$(RCPATH) $(RCFLAGS) netstat.rc -o netstat.res
 
-netstat.exe: netstat.obj netstat.res ntstub.exe
-	$(CTOOL_CC) $(NT_STUB) -fe=$@ netstat.obj wsock32.lib advapi32.lib
+netstatN.exe: netstatN.obj netstat.res ntstub.exe
+	$(CTOOL_CC) $(NT_STUB) -fe=$@ netstatN.obj wsock32.lib advapi32.lib
 	wrc netstat.res $@
+
+"net-stat.obj": "net-stat.c"
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c "net-stat.c"
+
+"net-stat.exe": "net-stat.obj" netstat.res
+	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) "net-stat.obj" wsock32.lib
+	wrc netstat.res $@
+
+net_stat.obj: net_stat.c
+	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ net_stat.c
+
+net_stat.exe: net_stat.obj
+	wlink system windows name net_stat.exe file net_stat.obj
 
 route.obj: route.c
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -fo=$@ -c route.c
@@ -1889,12 +1937,6 @@ route.res: route.rc arp.ico
 route.exe: route.obj route.res ntstub.exe
 	$(CTOOL_CC) $(NT_STUB) -fe=$@ route.obj wsock32.lib advapi32.lib
 	wrc route.res $@
-
-netstat16.obj: netstat16.c
-	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ netstat16.c
-
-netstat16.exe: netstat16.obj
-	wlink system windows name netstat16.exe file netstat16.obj
 
 route16.obj: route16.c
 	wcc -ml -bt=windows -zu -s -I/opt/watcom/h/win $(XFLAGS) -fo=$@ route16.c
@@ -1909,7 +1951,7 @@ clip16.exe: clip16.obj
 	wlink system windows name clip16.exe file clip16.obj
 
 # Convenience target: build all NT tools at once
-nt-tools: ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe netstat.exe route.exe .SYMBOLIC
+nt-tools: ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe timestmp.exe netstatN.exe route.exe .SYMBOLIC
 
 # =================================================================
 # Yori: remote screen viewer / control

@@ -1,13 +1,16 @@
 /*
- * gridcli.c  --  AeldreC2 Grid port scanner  --  console-subsystem wrapper
+ * grid32.c  --  AeldreC2 Grid port scanner -- Win32 / Win95 / NT console
  *
- * This file provides a main() entry point that always runs in CLI / console
- * mode.  All scan logic lives in grid_core.c (included directly).
+ * TCP connect scanner for Win95 and NT 3.1+.  Console subsystem; run from
+ * cmd.exe or command.com.  Deployable on target via tank 'put' for remote
+ * pivoted scanning; the tank 'grid' command runs it and streams output back
+ * to Joshua.
  *
- * Build (Win32 console subsystem):
- *   wcl386 -bt=nt -l=nt -za99 -ox -D_WIN32 -DGRIDCLI gridcli.c wsock32.lib
+ * Build:
+ *   wcl386 -bt=nt -l=nt -za99 -ox -D_WIN32 -fo=grid32.obj grid32.c
+ *   wlink system nt file grid32.obj library wsock32.lib name grid32.exe
  *
- * Usage: gridcli <target> -p <ports> [options]   (identical to grid.exe CLI)
+ * Usage: grid32 <target> -p <ports> [options]
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -429,6 +432,8 @@ static void do_scan(void)
 /* main()                                                              */
 /* ------------------------------------------------------------------ */
 
+static BOOL WINAPI ctrl_handler(DWORD type) { (void)type; g_stop = 1; return TRUE; }
+
 int main(int argc, char **argv)
 {
     WSADATA   wsa;
@@ -437,6 +442,7 @@ int main(int argc, char **argv)
     int        i;
 
     g_con_out = GetStdHandle(STD_OUTPUT_HANDLE);
+    SetConsoleCtrlHandler(ctrl_handler, TRUE);
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {

