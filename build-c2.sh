@@ -125,13 +125,15 @@ case "$TARGET" in
             python3 tools/mksetup.py
         ;;
     test)
-        # Build image, build all binaries, run test suite — all inside Docker
+        # Build image (layer-cached if Dockerfile unchanged), build any stale
+        # binaries (incremental — no -a), then run the test suite.
+        # Use FORCE=1 ./build-c2.sh test to force a full rebuild.
         docker build -t "$IMG" "$REPO"
         docker run --rm \
             -v "$REPO:/src" \
             -e "C2_INTEGRATION=${C2_INTEGRATION:-1}" \
             "$IMG" \
-            sh -c 'wmake -a -f Makefile.wc dist && cd /src && python3 -m pytest tests/ -v --tb=short'
+            sh -c "wmake ${FORCE:+-a} -f Makefile.wc dist && cd /src && python3 -m pytest tests/ -v --tb=short"
         ;;
     test-only)
         # Run tests against already-built binaries — no build, no image rebuild

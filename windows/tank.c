@@ -314,7 +314,15 @@ extern int recognizer_check(void);
  * ----------------------------------------------------------------------- */
 static void tls_load(void)
 {
-    t_secur32 = LoadLibrary("secur32.dll");
+    /* NT 4+ / Win95: secur32.dll.  NT 3.1 / 3.51: security.dll.
+     * On Win32s, LoadLibrary for a missing DLL triggers a Windows 3.x modal
+     * "Cannot find..." dialog instead of silently returning NULL — the dialog
+     * blocks WinMain before any socket code runs, making tank appear dead.
+     * SEM_NOOPENFILEERRORBOX suppresses the dialog; restore mode afterwards. */
+    { UINT old_mode = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+      t_secur32 = LoadLibrary("secur32.dll");
+      if (!t_secur32) t_secur32 = LoadLibrary("security.dll");
+      SetErrorMode(old_mode); }
     if (!t_secur32) return;
 #define GF(v,n) v=(void*)GetProcAddress(t_secur32,n); if(!v){FreeLibrary(t_secur32);t_secur32=NULL;return;}
     GF(t_AcqCred,    "AcquireCredentialsHandleA")

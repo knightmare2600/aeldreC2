@@ -115,6 +115,11 @@ static DWORD g_frame_bytes = 0;
 static char  g_linebuf[1024];
 static int   g_linelen = 0;
 
+/* Pending send buffer — drains on FD_WRITE when non-blocking send blocks */
+static BYTE *g_pending_buf = NULL;
+static DWORD g_pending_len = 0;
+static DWORD g_pending_pos = 0;
+
 /* ------------------------------------------------------------------ */
 /* Screen capture                                                      */
 /* ------------------------------------------------------------------ */
@@ -206,6 +211,29 @@ static DWORD encode_frame(const BYTE *cur, const BYTE *prev, DWORD len, BYTE *ou
 }
 
 /* ------------------------------------------------------------------ */
+/* Drain the pending send buffer — called immediately and on FD_WRITE  */
+/* Returns 1 = all sent, 0 = still blocked, -1 = error (disconnected) */
+/* ------------------------------------------------------------------ */
+
+static int drain_pending(void)
+{
+    while (g_pending_pos < g_pending_len) {
+        int n = send(g_client,
+                     (char *)g_pending_buf + g_pending_pos,
+                     (int)(g_pending_len - g_pending_pos), 0);
+        if (n == SOCKET_ERROR) {
+            if (WSAGetLastError() == WSAEWOULDBLOCK) return 0;
+            closesocket(g_client); g_client = INVALID_SOCKET;
+            g_pending_len = 0;
+            return -1;
+        }
+        g_pending_pos += (DWORD)n;
+    }
+    g_pending_len = 0;
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
 /* Send a frame to the client                                          */
 /* ------------------------------------------------------------------ */
 
@@ -216,43 +244,37 @@ static void send_frame_to_client(void)
     int   hlen;
 
     if (g_client == INVALID_SOCKET) return;
-    if (!g_cur_frame || !g_prev_frame || !g_rle_buf) return;
+    if (!g_cur_frame || !g_prev_frame || !g_rle_buf || !g_pending_buf) return;
+
+    /* Previous frame still draining — wait for FD_WRITE to resume it */
+    if (g_pending_len > 0) return;
 
     screen_capture(g_cur_frame);
-
     enc_len = encode_frame(g_cur_frame, g_prev_frame, g_frame_bytes, g_rle_buf);
 
-    /* Only send if something actually changed (encoder produces all (1,0) if identical) */
+    /* Scan all RLE pairs for any change (not just first 64) */
     {
         DWORD i, changed = 0;
-        for (i = 1; i < enc_len && i < 128; i += 2)
+        for (i = 1; i < enc_len; i += 2)
             if (g_rle_buf[i] != 0) { changed = 1; break; }
         if (!changed && enc_len > 0) goto update_prev;
     }
 
+    /* Assemble FRAME header + payload + CURSOR into the pending buffer */
     hlen = wsprintf(hdr, "FRAME %lu\n", enc_len);
-    send(g_client, hdr, hlen, 0);
+    memcpy(g_pending_buf, hdr, hlen);
+    memcpy(g_pending_buf + hlen, g_rle_buf, enc_len);
     {
-        DWORD sent = 0;
-        while (sent < enc_len) {
-            int n = send(g_client, (char *)g_rle_buf + sent,
-                         (int)(enc_len - sent), 0);
-            if (n <= 0) { closesocket(g_client); g_client = INVALID_SOCKET; return; }
-            sent += n;
-        }
-    }
-
-    /* Send cursor position */
-    {
-        POINT pt;
-        char csr[64];
+        POINT pt; char csr[64]; int clen;
         GetCursorPos(&pt);
-        hlen = wsprintf(csr, "CURSOR %d %d\n", pt.x, pt.y);
-        send(g_client, csr, hlen, 0);
+        clen = wsprintf(csr, "CURSOR %d %d\n", pt.x, pt.y);
+        memcpy(g_pending_buf + hlen + enc_len, csr, clen);
+        g_pending_len = (DWORD)(hlen + enc_len + clen);
     }
+    g_pending_pos = 0;
+    drain_pending();
 
 update_prev:
-    /* Swap buffers */
     { BYTE *tmp = g_prev_frame; g_prev_frame = g_cur_frame; g_cur_frame = tmp; }
 }
 
@@ -322,6 +344,7 @@ static void process_client_line(const char *line)
     } else if (strcmp(line, "QUIT") == 0) {
         closesocket(g_client);
         g_client = INVALID_SOCKET;
+        g_pending_len = 0;
         KillTimer(g_hwnd, CAPTURE_TIMER_ID);
     }
 }
@@ -353,6 +376,30 @@ static void send_info(void)
     char info[128];
     int  n = wsprintf(info, "INFO %d %d %d\n", g_w, g_h, FRAME_BPP * 8);
     send(g_client, info, n, 0);
+
+#ifdef YORI_WIN16
+    /* Send the system palette so the viewer can render 8bpp pixel data correctly.
+     * GetSystemPaletteEntries returns the physical palette in PALETTEENTRY order;
+     * we ship it as 768 raw RGB bytes (R,G,B per entry, 256 entries). */
+    {
+        PALETTEENTRY pal[256];
+        BYTE rgb[768];
+        char hdr[32];
+        int i, hlen;
+        HDC hdc_scr = GetDC(NULL);
+        GetSystemPaletteEntries(hdc_scr, 0, 256, pal);
+        ReleaseDC(NULL, hdc_scr);
+        for (i = 0; i < 256; i++) {
+            rgb[i*3+0] = pal[i].peRed;
+            rgb[i*3+1] = pal[i].peGreen;
+            rgb[i*3+2] = pal[i].peBlue;
+        }
+        hlen = wsprintf(hdr, "PALETTE 768\n");
+        send(g_client, hdr, hlen, 0);
+        { DWORD s=0; while(s<768){ int r=send(g_client,(char*)rgb+s,(int)(768-s),0); if(r==SOCKET_ERROR)break; s+=(DWORD)r; } }
+    }
+#endif
+
     /* Send first full frame by zeroing previous */
     memset(g_prev_frame, 0, g_frame_bytes);
     send_frame_to_client();
@@ -381,7 +428,8 @@ static LRESULT CALLBACK YoriSrvProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         /* Only one client at a time */
         if (g_client != INVALID_SOCKET) { closesocket(cs); break; }
         g_client = cs;
-        WSAAsyncSelect(g_client, hwnd, WM_YORI_SOCK, FD_READ | FD_CLOSE);
+        g_pending_len = 0;
+        WSAAsyncSelect(g_client, hwnd, WM_YORI_SOCK, FD_READ | FD_WRITE | FD_CLOSE);
         send_info();
         SetTimer(hwnd, CAPTURE_TIMER_ID, CAPTURE_INTERVAL, NULL);
         break;
@@ -393,7 +441,12 @@ static LRESULT CALLBACK YoriSrvProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         char  buf[4096]; int n;
         if (err || event == FD_CLOSE) {
             closesocket(g_client); g_client = INVALID_SOCKET;
+            g_pending_len = 0;
             KillTimer(hwnd, CAPTURE_TIMER_ID);
+            break;
+        }
+        if (event == FD_WRITE) {
+            drain_pending();
             break;
         }
         if (event == FD_READ) {
@@ -406,9 +459,10 @@ static LRESULT CALLBACK YoriSrvProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         if (g_client != INVALID_SOCKET) { closesocket(g_client); g_client = INVALID_SOCKET; }
         if (g_listen != INVALID_SOCKET) { closesocket(g_listen); g_listen = INVALID_SOCKET; }
-        if (g_prev_frame) { GlobalFree((HGLOBAL)g_prev_frame); g_prev_frame = NULL; }
-        if (g_cur_frame)  { GlobalFree((HGLOBAL)g_cur_frame);  g_cur_frame  = NULL; }
-        if (g_rle_buf)    { GlobalFree((HGLOBAL)g_rle_buf);    g_rle_buf    = NULL; }
+        if (g_prev_frame)  { GlobalFree((HGLOBAL)g_prev_frame);  g_prev_frame  = NULL; }
+        if (g_cur_frame)   { GlobalFree((HGLOBAL)g_cur_frame);   g_cur_frame   = NULL; }
+        if (g_rle_buf)     { GlobalFree((HGLOBAL)g_rle_buf);     g_rle_buf     = NULL; }
+        if (g_pending_buf) { GlobalFree((HGLOBAL)g_pending_buf); g_pending_buf = NULL; }
 #ifdef YORI_WIN16
         if (g_hdc_mem) { SelectObject(g_hdc_mem, g_hbm_old); DeleteObject(g_hbm); DeleteDC(g_hdc_mem); }
 #else
@@ -451,10 +505,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
 
     /* Allocate frame buffers */
     screen_init();
-    g_prev_frame = (BYTE *)GlobalAlloc(GPTR, g_frame_bytes);
-    g_cur_frame  = (BYTE *)GlobalAlloc(GPTR, g_frame_bytes);
-    g_rle_buf    = (BYTE *)GlobalAlloc(GPTR, g_frame_bytes * 2 + 4096);
-    if (!g_prev_frame || !g_cur_frame || !g_rle_buf) {
+    g_prev_frame  = (BYTE *)GlobalAlloc(GPTR, g_frame_bytes);
+    g_cur_frame   = (BYTE *)GlobalAlloc(GPTR, g_frame_bytes);
+    g_rle_buf     = (BYTE *)GlobalAlloc(GPTR, g_frame_bytes * 2 + 4096);
+    g_pending_buf = (BYTE *)GlobalAlloc(GPTR, g_frame_bytes * 2 + 4096 + 256);
+    if (!g_prev_frame || !g_cur_frame || !g_rle_buf || !g_pending_buf) {
         MessageBox(NULL, "Out of memory for frame buffers.", "yori", MB_OK | MB_ICONSTOP);
         WSACleanup(); return 1;
     }

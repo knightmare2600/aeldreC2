@@ -89,6 +89,14 @@ static int       g_in_frame   = 0;
 static float     g_scale_x = 1.0f, g_scale_y = 1.0f;
 static int       g_view_w = 800, g_view_h = 600;
 
+/* 8bpp palette received from Win16 server — RGB triplets, 256 entries */
+static BYTE   g_palette_rgb[768];
+static RGBQUAD g_bmi_colors[256];
+static int    g_has_palette = 0;
+static int    g_in_palette  = 0;
+static DWORD  g_pal_need    = 0;
+static DWORD  g_pal_recv    = 0;
+
 /* Receive line buffer */
 static char  g_linebuf[1024];
 static int   g_linelen = 0;
@@ -120,22 +128,39 @@ static void apply_rle_frame(const BYTE *rle, DWORD rle_len)
 
 static void render_frame(HDC hdc)
 {
-    BITMAPINFO bmi;
     if (!g_frame_prev || g_srv_w <= 0 || g_srv_h <= 0) return;
 
-    memset(&bmi, 0, sizeof(bmi));
-    bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth       = g_srv_w;
-    bmi.bmiHeader.biHeight      = -g_srv_h;  /* top-down */
-    bmi.bmiHeader.biPlanes      = 1;
-    bmi.bmiHeader.biBitCount    = (WORD)(g_srv_bpp);
-    bmi.bmiHeader.biCompression = BI_RGB;
-
-    /* Scale to our window */
-    StretchDIBits(hdc,
-                  0, 0, g_view_w, g_view_h,
-                  0, 0, g_srv_w,  g_srv_h,
-                  g_frame_prev, &bmi, DIB_RGB_COLORS, SRCCOPY);
+    if (g_srv_bpp == 8) {
+        /* 8bpp palette image from Win16 server — needs a 256-entry colour table */
+        struct { BITMAPINFOHEADER h; RGBQUAD c[256]; } bmi8;
+        memset(&bmi8, 0, sizeof(bmi8));
+        bmi8.h.biSize        = sizeof(BITMAPINFOHEADER);
+        bmi8.h.biWidth       = g_srv_w;
+        bmi8.h.biHeight      = -g_srv_h;
+        bmi8.h.biPlanes      = 1;
+        bmi8.h.biBitCount    = 8;
+        bmi8.h.biCompression = BI_RGB;
+        if (g_has_palette)
+            memcpy(bmi8.c, g_bmi_colors, 256 * sizeof(RGBQUAD));
+        StretchDIBits(hdc,
+                      0, 0, g_view_w, g_view_h,
+                      0, 0, g_srv_w,  g_srv_h,
+                      g_frame_prev, (BITMAPINFO *)&bmi8, DIB_RGB_COLORS, SRCCOPY);
+    } else {
+        /* 24bpp from Win32 server — BITMAPINFO needs no colour table */
+        BITMAPINFO bmi;
+        memset(&bmi, 0, sizeof(bmi));
+        bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth       = g_srv_w;
+        bmi.bmiHeader.biHeight      = -g_srv_h;
+        bmi.bmiHeader.biPlanes      = 1;
+        bmi.bmiHeader.biBitCount    = (WORD)g_srv_bpp;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        StretchDIBits(hdc,
+                      0, 0, g_view_w, g_view_h,
+                      0, 0, g_srv_w,  g_srv_h,
+                      g_frame_prev, &bmi, DIB_RGB_COLORS, SRCCOPY);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -188,6 +213,10 @@ static void process_server_line(const char *line)
         g_frame_need = (DWORD)atol(line + 6);
         g_frame_recv = 0;
         g_in_frame   = 1;
+    } else if (strncmp(line, "PALETTE ", 8) == 0) {
+        g_pal_need  = (DWORD)atol(line + 8);
+        g_pal_recv  = 0;
+        g_in_palette = 1;
     } else if (strncmp(line, "CURSOR ", 7) == 0) {
         /* Cursor position — we could draw a crosshair, skip for now */
     }
@@ -215,6 +244,26 @@ static void process_recv(const char *buf, int len)
                     apply_rle_frame(g_rle_accum, g_frame_recv);
                 g_in_frame = 0;
                 InvalidateRect(g_hwnd, NULL, FALSE);
+            }
+        } else if (g_in_palette) {
+            /* Binary palette data from Win16 server */
+            DWORD avail = (DWORD)(len - i);
+            DWORD need  = g_pal_need - g_pal_recv;
+            DWORD take  = (avail < need) ? avail : need;
+            if (g_pal_recv + take <= 768)
+                memcpy(g_palette_rgb + g_pal_recv, buf + i, take);
+            g_pal_recv += take;
+            i += (int)take;
+            if (g_pal_recv >= g_pal_need) {
+                int j;
+                for (j = 0; j < 256; j++) {
+                    g_bmi_colors[j].rgbRed      = g_palette_rgb[j*3+0];
+                    g_bmi_colors[j].rgbGreen    = g_palette_rgb[j*3+1];
+                    g_bmi_colors[j].rgbBlue     = g_palette_rgb[j*3+2];
+                    g_bmi_colors[j].rgbReserved = 0;
+                }
+                g_has_palette = 1;
+                g_in_palette  = 0;
             }
         } else {
             /* Text line */
@@ -264,9 +313,11 @@ static void do_disconnect(void)
         WSAAsyncSelect(g_sock, g_hwnd, 0, 0);
         closesocket(g_sock); g_sock = INVALID_SOCKET;
     }
-    g_state     = ST_IDLE;
-    g_in_frame  = 0;
-    g_linelen   = 0;
+    g_state      = ST_IDLE;
+    g_in_frame   = 0;
+    g_in_palette = 0;
+    g_has_palette = 0;
+    g_linelen    = 0;
     SetWindowText(g_hwnd, APP_TITLE "  [disconnected]");
 }
 

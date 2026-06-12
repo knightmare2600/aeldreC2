@@ -22,10 +22,11 @@ import os
 import re
 import socket
 import subprocess
+import tempfile
 import time
 
 import pytest
-from conftest import exe_path, wine_env, free_port
+from conftest import exe_path, wine_env, free_port, clu_patch
 
 _WINE = None
 try:
@@ -137,32 +138,39 @@ def test_netstatn_exits():
 # ------------------------------------------------------------------
 
 @skip_no_wine
-def test_tank_connects_and_sends_banner():
+def test_tank_connects_and_sends_banner(tmp_path):
     """
-    tank.exe (default key=00000000) should connect to a listening server.
-    We listen on a free port, set TANK_C2_HOST/PORT via the CLU config
-    defaults (127.0.0.1:4444), and use a fresh socket.
+    tank.exe must connect to a listening server and send a Tank/1 banner.
 
-    Since tank.exe is already built with host=127.0.0.1 port=4444,
-    we just listen on 4444 (if free) or skip.
+    We patch a copy of the binary via the CLU block to point at a free
+    port on loopback, avoiding the hardcoded 4444 assumption and making
+    the test self-contained regardless of what else is running.
     """
-    port = 4444
-    try:
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind(("127.0.0.1", port))
-        srv.listen(1)
-        srv.settimeout(12)
-    except OSError:
-        pytest.skip(f"Port {port} not available — another process is using it")
-
     path = exe_path("tank.exe")
     if not os.path.exists(path):
-        srv.close()
         pytest.skip("tank.exe not built")
 
+    port = free_port()
+    with open(path, "rb") as f:
+        original = f.read()
+
+    try:
+        patched = clu_patch(original, host="127.0.0.1", port=port,
+                            tls=0, key="00000000")
+    except ValueError as e:
+        pytest.skip(f"CLU patch failed: {e}")
+
+    patched_path = tmp_path / "tank_smoke.exe"
+    patched_path.write_bytes(patched)
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", port))
+    srv.listen(1)
+    srv.settimeout(12)
+
     proc = subprocess.Popen(
-        [_WINE, path],
+        [_WINE, str(patched_path)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env=wine_env(),
     )
@@ -236,7 +244,7 @@ def test_clu_is_pe_and_starts(tmp_path):
 # ------------------------------------------------------------------
 
 @skip_no_wine
-@pytest.mark.parametrize("name", ["tank.exe", "lightman.exe", "ipcalc32.exe"])
+@pytest.mark.parametrize("name", ["joshua.exe", "tank.exe", "lightman.exe", "ipcalc32.exe"])
 def test_no_secur32_loader_error(name):
     """
     Binaries must start without Wine reporting a secur32.dll loader error.

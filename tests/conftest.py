@@ -11,6 +11,7 @@ Requirements:
 
 import os
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -92,6 +93,40 @@ def free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+# ------------------------------------------------------------------
+# CLU binary patching
+# ------------------------------------------------------------------
+
+CLU_MAGIC    = b"AELDRECLU0001"
+CLU_HOST_OFF = 14    # char[64]
+CLU_PORT_OFF = 78    # WORD (little-endian)
+CLU_TLS_OFF  = 80    # BYTE
+CLU_KEY_OFF  = 81    # char[9]  (8 hex + \0)
+
+
+def clu_patch(binary_data, host="127.0.0.1", port=4444, tls=0, key="00000000"):
+    """
+    Return a copy of binary_data with the CLU config block patched.
+    Raises ValueError if the CLU magic is not found.
+    """
+    data = bytearray(binary_data)
+    pos = data.find(CLU_MAGIC)
+    if pos < 0:
+        raise ValueError("CLU magic 'AELDRECLU0001' not found in binary")
+
+    host_bytes = host.encode("ascii")[:63]
+    data[pos + CLU_HOST_OFF : pos + CLU_PORT_OFF] = (
+        host_bytes + b"\x00" * (64 - len(host_bytes))
+    )
+    data[pos + CLU_PORT_OFF : pos + CLU_TLS_OFF] = struct.pack("<H", port)
+    data[pos + CLU_TLS_OFF]                       = tls
+    key_bytes = key.encode("ascii")[:8]
+    data[pos + CLU_KEY_OFF : pos + CLU_KEY_OFF + 9] = (
+        key_bytes + b"\x00" * (9 - len(key_bytes))
+    )
+    return bytes(data)
 
 
 # ------------------------------------------------------------------

@@ -895,9 +895,13 @@ static LRESULT CALLBACK InputBoxProc(HWND, UINT, WPARAM, LPARAM);
 static void tls_load(void)
 {
     /* NT 4+ / Win95: secur32.dll.  NT 3.1 / 3.51: security.dll.
-     * Try both; if neither is present, TLS is silently disabled.   */
-    g_secur32 = LoadLibrary("secur32.dll");
-    if (!g_secur32) g_secur32 = LoadLibrary("security.dll");
+     * On Win32s, LoadLibrary for a missing DLL triggers a Windows 3.x modal
+     * "Cannot find..." dialog rather than silently returning NULL.
+     * SEM_NOOPENFILEERRORBOX suppresses it; restore the mode afterwards. */
+    { UINT old_mode = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+      g_secur32 = LoadLibrary("secur32.dll");
+      if (!g_secur32) g_secur32 = LoadLibrary("security.dll");
+      SetErrorMode(old_mode); }
     if (!g_secur32) return;
 #define GF(v,n) v=(void*)GetProcAddress(g_secur32,n); if(!v){FreeLibrary(g_secur32);g_secur32=NULL;return;}
     GF(p_AcqCred,    "AcquireCredentialsHandleA")
