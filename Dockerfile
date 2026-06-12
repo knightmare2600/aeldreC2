@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM --platform=linux/amd64 ubuntu:22.04
 
 LABEL description="ÆldreC2 build environment — OpenWatcom 2.0 + mingw-w64 Win16/Win32s cross-compiler"
 
