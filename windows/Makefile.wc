@@ -431,9 +431,10 @@ all: pageant.exe plink.exe pscp.exe psftp.exe putty.exe puttygen.exe puttytel.ex
 
 win32s: pageant.exe putty.exe puttytel.exe puttygen.exe winsftp.exe ncwfw.exe joshua.exe tank.exe tank16.exe ipcalc16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe markuped.exe wget.exe wget16.exe flynn.exe setup16.exe setup32.exe .SYMBOLIC
 
-dist: all .SYMBOLIC
+dist: all setup32.exe .SYMBOLIC
 	sh -c "mkdir -p ../output/compiled ../output/exe"
-	python3 ../tools/mksetup.py --out16 output/exe/setup16.exe --out32 output/exe/setup32.exe
+	python3 ../tools/mksetup.py --out16 output/exe/setup16.exe
+	cp setup32.exe ../output/exe/setup32.exe
 	python3 ../help/mkhlp.py ../output/compiled/aeldreC2.HLP
 	cp joshua.exe tank.exe tank16.exe clu.exe grid.exe gridcli.exe ipcalc32.exe ipcalc16.exe markuped.exe wget.exe wget16.exe lightman.exe flynn.exe ncwfw.exe ncnt.exe svcany.exe regcli.exe whoami.exe arp.exe stager.exe clip.exe clip16.exe timestmp.exe yori16.exe yori32.exe yoriview.exe jloshtog.exe dumont.exe netstatN.exe "net-stat.exe" net_stat.exe route.exe route16.exe lman16.exe nc16.exe grid16.exe grid32.exe gridnt.exe putty.exe puttytel.exe puttygen.exe winsftp.exe pageant.exe aelctl.dll ../output/compiled/
 	sh -c "cd ../output && zip -9 -j aeldrec2-tools.zip compiled/*.exe compiled/*.dll compiled/aeldreC2.HLP exe/setup16.exe exe/setup32.exe ../README.md && echo 'Created: output/aeldrec2-tools.zip'"
@@ -1091,18 +1092,18 @@ setup16.exe: setup16.obj setup16.res
 	$(WRC16) setup16.res $@
 
 # =================================================================
-# setup32.exe -- Win32 self-extracting installer
+# setup32.exe -- InnoSetup 1.2.16 installer
+# Requires: innoextract + wine (both present in the Docker build image)
 # =================================================================
 
-setup32.obj: setup32.c
-	$(CC) $(COMPAT) $(CFLAGS) -fo=$@ -c setup32.c
+INNO_DIST = ../dist/isetup16-1.2.16.exe
+INNO_DIR  = /tmp/aeldrec2-inno
 
-setup32.res: setup32.rc ../gpl30.txt
-	$(RCPATH) $(RCFLAGS) setup32.rc -o setup32.res
+$(INNO_DIR)/.extracted: $(INNO_DIST)
+	sh -c "mkdir -p $(INNO_DIR) && innoextract -d $(INNO_DIR) $(INNO_DIST) && touch $(INNO_DIR)/.extracted"
 
-setup32.exe: setup32.obj setup32.res
-	$(CC) -bt=nt -l=nt_win -fe=$@ $(LDFLAGS) setup32.obj
-	wrc setup32.res $@
+setup32.exe: setup32.iss $(INNO_DIR)/.extracted
+	sh -c "WINEDEBUG=-all DISPLAY= wine $(INNO_DIR)/app/ISCC.EXE setup32.iss"
 
 # =================================================================
 # aelctl.dll — Win32s-compatible common controls shim
