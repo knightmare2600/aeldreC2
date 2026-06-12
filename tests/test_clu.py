@@ -142,12 +142,19 @@ def test_clu_launches(wine):
     if not os.path.exists(clu):
         pytest.skip("clu.exe not built")
 
-    env = {"WINEDEBUG": "-all", "DISPLAY": ""}
+    env = {**os.environ, "WINEDEBUG": "-all"}
+    # xvfb-run gives wine a virtual framebuffer so the GUI window can open;
+    # fall back to no display if xvfb-run is not in PATH
+    import shutil
+    cmd = (["xvfb-run", "-a", wine, clu]
+           if shutil.which("xvfb-run") else [wine, clu])
+    if not shutil.which("xvfb-run"):
+        env["DISPLAY"] = ""
     proc = subprocess.Popen(
-        [wine, clu],
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env={**os.environ, **env},
+        env=env,
     )
     time.sleep(2)
     still_running = proc.poll() is None

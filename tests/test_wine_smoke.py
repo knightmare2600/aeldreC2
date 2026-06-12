@@ -263,7 +263,12 @@ def test_no_secur32_loader_error(name):
         proc.kill()
         _, stderr = proc.communicate()
 
-    err = stderr.lower()
+    # Strip ntlm_auth diagnostics — wine's built-in secur32 reports missing
+    # ntlm_auth support at runtime; that is not a loader error.
+    filtered = "\n".join(
+        l for l in stderr.splitlines() if "ntlm_auth" not in l.lower()
+    )
+    err = filtered.lower()
     assert "secur32" not in err or "builtin" in err, (
         f"{name}: Wine reported a secur32 loader error:\n{stderr[:400]}"
     )
