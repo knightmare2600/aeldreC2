@@ -1,14 +1,14 @@
-; AeldreC2 -- Win32s / Win95 / NT installer
-; Built with InnoSetup 1.2.16 (jrsoftware.org/isdl-old.php)
+; AeldreC2 -- installer for Windows 3.1x / Win32s / Win95 / NT
+; Built with InnoSetup 1.2.16 16-bit edition (isetup16-1.2.16.exe)
 ;
-; PREREQUISITE: On Windows 3.11 / WFW 3.11, Win32s 1.30 must already be
-; installed before running this installer.  Install it with the redistributable
-; fetched via fetch-win32s.sh, then run setup32.exe.
-; On Windows 95 and NT 3.x / 4.x no prerequisites are required.
+; The installer itself is a Win16 NE executable produced by COMPIL16.EXE.
+; It runs on bare Windows 3.1x / WFW 3.11 (no Win32s required to run
+; the installer), as well as on Win32s, Win95, and NT 3.x / 4.x.
+; The files it installs are Win32 PE executables targeting Win32s / NT.
 ;
-; Build (from windows/ directory inside the Docker build container):
+; Build (automated via wmake dist / tools/run_inno16.sh):
 ;   innoextract -d /tmp/aeldrec2-inno ../dist/isetup16-1.2.16.exe
-;   wine /tmp/aeldrec2-inno/app/ISCC.EXE setup32.iss
+;   xvfb-run wine /tmp/aeldrec2-inno/app/COMPIL16.EXE setup32.iss
 
 [Setup]
 AppName=AeldreC2
@@ -19,9 +19,6 @@ DefaultGroupName=AeldreC2
 LicenseFile=..\gpl30.txt
 OutputDir=.
 OutputBaseFilename=setup32
-
-[Tasks]
-Name: nttools; Description: NT-only tools (Windows NT 3.1 or later); Flags: unchecked
 
 [Files]
 ; ------ Core operator tools: Win32s + Win95 + NT ------
@@ -39,23 +36,22 @@ Source: yori32.exe;   DestDir: {app}; Flags: ignoreversion
 Source: jloshtog.exe; DestDir: {app}; Flags: ignoreversion
 Source: net-stat.exe; DestDir: {app}; Flags: ignoreversion
 Source: aelctl.dll;   DestDir: {app}; Flags: ignoreversion
-
-; ------ NT-only tools (optional, unchecked by default) ------
-Source: lightman.exe; DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: ncnt.exe;     DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: gridcli.exe;  DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: gridnt.exe;   DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: grid32.exe;   DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: netstatN.exe; DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: route.exe;    DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: svcany.exe;   DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: regcli.exe;   DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: whoami.exe;   DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: arp.exe;      DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: stager.exe;   DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: timestmp.exe; DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: yoriview.exe; DestDir: {app}; Tasks: nttools; Flags: ignoreversion
-Source: dumont.exe;   DestDir: {app}; Tasks: nttools; Flags: ignoreversion
+; ------ NT-only tools (carry DOS stub on wrong platform) ------
+Source: lightman.exe; DestDir: {app}; Flags: ignoreversion
+Source: ncnt.exe;     DestDir: {app}; Flags: ignoreversion
+Source: gridcli.exe;  DestDir: {app}; Flags: ignoreversion
+Source: gridnt.exe;   DestDir: {app}; Flags: ignoreversion
+Source: grid32.exe;   DestDir: {app}; Flags: ignoreversion
+Source: netstatN.exe; DestDir: {app}; Flags: ignoreversion
+Source: route.exe;    DestDir: {app}; Flags: ignoreversion
+Source: svcany.exe;   DestDir: {app}; Flags: ignoreversion
+Source: regcli.exe;   DestDir: {app}; Flags: ignoreversion
+Source: whoami.exe;   DestDir: {app}; Flags: ignoreversion
+Source: arp.exe;      DestDir: {app}; Flags: ignoreversion
+Source: stager.exe;   DestDir: {app}; Flags: ignoreversion
+Source: timestmp.exe; DestDir: {app}; Flags: ignoreversion
+Source: yoriview.exe; DestDir: {app}; Flags: ignoreversion
+Source: dumont.exe;   DestDir: {app}; Flags: ignoreversion
 
 [Icons]
 Name: {group}\Joshua C2 Controller;  Filename: {app}\joshua.exe

@@ -1098,12 +1098,13 @@ setup16.exe: setup16.obj setup16.res
 
 INNO_DIST = ../dist/isetup16-1.2.16.exe
 INNO_DIR  = /tmp/aeldrec2-inno
+INNO_DONE = inno16.done
 
-$(INNO_DIR)/.extracted: $(INNO_DIST)
-	sh -c "mkdir -p $(INNO_DIR) && innoextract -d $(INNO_DIR) $(INNO_DIST) && touch $(INNO_DIR)/.extracted"
+$(INNO_DONE): $(INNO_DIST)
+	sh -c "mkdir -p $(INNO_DIR) && innoextract -d $(INNO_DIR) $(INNO_DIST) && touch $(INNO_DONE)"
 
-setup32.exe: setup32.iss $(INNO_DIR)/.extracted
-	sh -c "WINEDEBUG=-all DISPLAY= wine $(INNO_DIR)/app/ISCC.EXE setup32.iss"
+setup32.exe: setup32.iss $(INNO_DONE)
+	sh ../tools/run_inno16.sh $(INNO_DIR)/app/COMPIL16.EXE setup32.iss setup32.exe
 
 # =================================================================
 # aelctl.dll — Win32s-compatible common controls shim

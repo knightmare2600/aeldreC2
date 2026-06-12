@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Wine (32-bit) for running Win32 test binaries; pytest + requests for the test suite
 RUN dpkg --add-architecture i386 \
     && apt-get update \
-    && apt-get install -y --no-install-recommends wine wine32 innoextract \
+    && apt-get install -y --no-install-recommends wine wine32 innoextract xvfb \
     && pip3 install --no-cache-dir pytest requests \
     && rm -rf /var/lib/apt/lists/*
 

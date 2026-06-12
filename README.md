@@ -957,7 +957,7 @@ Win32s is required to run Win32 tools on Windows 3.11 / WFW 3.11.
 
 The setup installer (`setup16.exe`) probes for Win32s at startup and warns if absent.
 
-The Win32s distribution installer (`setup32.exe`, built with InnoSetup 1.2.16) **requires Win32s to already be installed** on Windows 3.11 / WFW 3.11 before it can run — install Win32s first via `pw1232.exe`, then run `setup32.exe`. On Windows 95 and NT 3.x/4.x, `setup32.exe` runs without any prerequisites.
+The Win32s distribution installer (`setup32.exe`) is built with InnoSetup 1.2.16 **16-bit edition** — the installer itself is a Win16 NE executable and **requires no prerequisites** to run on any supported platform (Windows 3.1x, WFW 3.11, Win32s, Win95, NT 3.x/4.x). The Win32 tools it installs require Win32s on Windows 3.11; install Win32s via `pw1232.exe` from `fetch-win32s.sh` before using the installed tools.
 
 ---
 
