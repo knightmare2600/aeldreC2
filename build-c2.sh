@@ -137,11 +137,15 @@ case "$TARGET" in
         # Run tests against already-built binaries — no build, no image rebuild
         run_tests_in_docker
         ;;
+    dist)
+        # Full release build: all binaries + InnoSetup installer + WinHelp + ZIP
+        run dist
+        ;;
     all)
-        # full PuTTY + C2 suite — slow
+        # Full PuTTY + C2 suite — slow
         run all
         ;;
-    joshua|tank|tank16|clu|ncwfw|grid|ipcalc32|ipcalc16|markuped|wget|wget16|lightman|flynn|setup16)
+    joshua|tank|tank16|clu|ncwfw|grid|ipcalc32|ipcalc16|markuped|wget|wget16|lightman|flynn|setup16|setup32)
         run "${TARGET}.exe"
         ;;
     *)
