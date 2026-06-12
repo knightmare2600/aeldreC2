@@ -35,7 +35,8 @@ Source: markuped.exe; DestDir: {app}; Flags: ignoreversion
 Source: yori32.exe;   DestDir: {app}; Flags: ignoreversion
 Source: jloshtog.exe; DestDir: {app}; Flags: ignoreversion
 Source: net-stat.exe; DestDir: {app}; Flags: ignoreversion
-Source: aelctl.dll;   DestDir: {app}; Flags: ignoreversion
+Source: aelctl.dll;      DestDir: {app}; Flags: ignoreversion
+Source: ..\dist\CTL3DV2.DLL; DestDir: {app}; Flags: ignoreversion
 ; ------ NT-only tools (carry DOS stub on wrong platform) ------
 Source: lightman.exe; DestDir: {app}; Flags: ignoreversion
 Source: ncnt.exe;     DestDir: {app}; Flags: ignoreversion

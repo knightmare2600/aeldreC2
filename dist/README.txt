@@ -3,6 +3,9 @@ Runtime DLLs for Win32s / WFW 3.11 deployment
 
   WSOCK32.DLL   -- Win32s Winsock (from Win32s 1.30 package)
   COMDLG32.DLL  -- Win32s common dialogs (from Win32s 1.30 package)
+  CTL3DV2.DLL   -- Win16 3D controls (extracted from InnoSetup 1.2.16 sample,
+                   Microsoft redistributable; gives dialogs beveled appearance
+                   on Windows 3.1x / WFW 3.11)
 
 Source: Microsoft Win32s 1.30 distribution (freely available on archive.org
 and Winworld). Extract from the Win32s installer or from a WFW 3.11 disc
@@ -26,6 +29,13 @@ the output folder is self-contained for Win32s deployment.
 On a Win32s machine with the standard Win32s 1.30 + Winsock32 packages
 already installed, these DLLs are already in the Win32s system directory
 and the output/win32s/ copies are redundant but harmless.
+
+CTL3DV2.DLL note
+----------------
+CTL3DV2.DLL is generated automatically at build time: 'wmake dist' runs
+innoextract on isetup16-1.2.16.exe, which includes CTL3DV2.DLL in its
+sample directory as a Microsoft redistributable. The build copies it here.
+Safe to redistribute; safe on Win32s, Win95, and NT.
 
 Not included
 ------------

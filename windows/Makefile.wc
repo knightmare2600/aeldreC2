@@ -447,9 +447,10 @@ dist: all setup32.exe .SYMBOLIC
 # dist-all   : all three platform folders
 # =================================================================
 
-dist-wfw: tank16.exe net_stat.exe route16.exe ipcalc16.exe wget16.exe yori16.exe setup16.exe clip16.exe lman16.exe nc16.exe grid16.exe .SYMBOLIC
+dist-wfw: tank16.exe net_stat.exe route16.exe ipcalc16.exe wget16.exe yori16.exe setup16.exe clip16.exe lman16.exe nc16.exe grid16.exe $(INNO_DONE) .SYMBOLIC
 	sh -c "mkdir -p ../output/wfw"
 	cp tank16.exe net_stat.exe route16.exe ipcalc16.exe wget16.exe yori16.exe setup16.exe clip16.exe lman16.exe nc16.exe grid16.exe ../output/wfw/
+	cp ../dist/CTL3DV2.DLL ../output/wfw/
 
 dist-win32: joshua.exe tank.exe clu.exe flynn.exe ncwfw.exe grid.exe clip.exe wget.exe ipcalc32.exe markuped.exe yori32.exe jloshtog.exe setup32.exe "net-stat.exe" aelctl.dll .SYMBOLIC
 	sh -c "mkdir -p ../output/win32s"
@@ -1101,7 +1102,7 @@ INNO_DIR  = /tmp/aeldrec2-inno
 INNO_DONE = inno16.done
 
 $(INNO_DONE): $(INNO_DIST)
-	sh -c "mkdir -p $(INNO_DIR) && innoextract -d $(INNO_DIR) $(INNO_DIST) && touch $(INNO_DONE)"
+	sh -c "mkdir -p $(INNO_DIR) && innoextract -d $(INNO_DIR) $(INNO_DIST) && cp $(INNO_DIR)/app/SAMPLE16/CTL3DV2.DLL ../dist/CTL3DV2.DLL && touch $(INNO_DONE)"
 
 setup32.exe: setup32.iss $(INNO_DONE)
 	sh ../tools/run_inno16.sh $(INNO_DIR)/app/COMPIL16.EXE setup32.iss setup32.exe
